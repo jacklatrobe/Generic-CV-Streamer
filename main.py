@@ -1,61 +1,49 @@
 """
-Capture still frames from a YouTube live stream every N seconds.
-Tested with: Python 3.11, yt‑dlp 2025.3.1, pafy 0.5.5, opencv‑python 4.9.
+Main application script for YouTube Stream Frame Capturer.
+Orchestrates downloading, frame extraction, and (eventually) CV processing.
 """
 
-import cv2
-import pafy
-import time
 import os
-from datetime import datetime
+# Removed unused imports like cv2, time, datetime, sys, io, yt_dlp as they are now in their respective classes
+
+from downloading.downloader import YouTubeDownloader
+from image_wrangling.frame_extractor import FrameExtractor
+# from computer_vision.cv_processor import LocalCVProcessor # Import when ready to use
 
 YOUTUBE_URL   = "https://www.youtube.com/watch?v=BsfcSCJZRFM"
-SAVE_DIR      = "boat_ramp_frames"
-CAPTURE_EVERY = 2.0            # seconds
-YT_API_KEY = os.environ.get("YT_API_KEY", "AIzaSyC7HnQgRrr7f675X9xViqUvnG52MU-1zmU")
+SAVE_DIR      = "boat_ramp_frames"  # This can be passed to FrameExtractor
+CAPTURE_EVERY = 2.0             # This can be passed to FrameExtractor
 
-# -----------------------------------------------------------------------------
-def get_stream_url(video_url: str) -> str:
-    """Return the direct video stream URL (best available)."""
-    # Tell pafy to use yt‑dlp instead of (deprecated) youtube‑dl
-    import pafy
-    pafy.set_api_key(None)
-    # yt‑dlp already bundled with pafy if installed as above
-    v = pafy.new(video_url)
-    best = v.getbest(preftype="mp4")
-    return best.url
-
-def capture_frames(stream_url: str):
-    os.makedirs(SAVE_DIR, exist_ok=True)
-    cap = cv2.VideoCapture(stream_url)
-    if not cap.isOpened():
-        raise RuntimeError("Could not open stream.")
-
-    last_save = 0.0
-    frame_count = 0
-    print("Capturing…  Press Ctrl‑C to stop.")
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            print("Stream read failed, retrying in 5 s…")
-            time.sleep(5)
-            continue
-
-        now = time.time()
-        if now - last_save >= CAPTURE_EVERY:
-            ts   = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-            path = os.path.join(SAVE_DIR, f"frame_{ts}.jpg")
-            cv2.imwrite(path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-            frame_count += 1
-            last_save = now
-            print(f"saved {path}")
-
-except KeyboardInterrupt:
-    print(f"\nStopped – {frame_count} images saved.")
-finally:
-    cap.release()
+# Removed get_stream_url function (now in YouTubeDownloader)
+# Removed capture_frames function (now in FrameExtractor)
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    url = get_stream_url(YOUTUBE_URL)
-    capture_frames(url)
+    # Initialize the components
+    downloader = YouTubeDownloader()
+    # Pass configuration to FrameExtractor. SAVE_DIR and CAPTURE_EVERY are used here.
+    frame_extractor = FrameExtractor(save_dir=SAVE_DIR, capture_every_sec=CAPTURE_EVERY)
+    # local_cv_processor = LocalCVProcessor() # Initialize when ready
+
+    print(f"Attempting to capture frames from: {YOUTUBE_URL}")
+    print(f"Frames will be saved to: {os.path.abspath(SAVE_DIR)}")
+    print(f"Capturing one frame every {CAPTURE_EVERY} seconds.")
+
+    try:
+        stream_url = downloader.get_stream_url(YOUTUBE_URL)
+        print(f"Successfully obtained stream URL.")
+        
+        # Start capturing frames from the obtained stream URL
+        frame_extractor.capture_frames_from_stream(stream_url)
+        
+        # Future step: Once frames are saved, or if processing live frames:
+        # for frame_path in collected_frame_paths: # Or for frame_data in live_frames:
+        #     results = local_cv_processor.process_image(frame_path) # or local_cv_processor.process_frame(frame_data)
+        #     print(f"CV Results for {frame_path}: {results}")
+
+    except RuntimeError as e:
+        print(f"An error occurred: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+
+    print("Application finished.")
