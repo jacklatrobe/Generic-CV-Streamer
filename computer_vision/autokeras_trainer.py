@@ -124,8 +124,13 @@ class AutoKerasTrainer:
             print("Model training complete.")
             
             print(f"Exporting model to {self.model_path}...")
-            # Exports the best model found by AutoKeras during the 'fit' process.
-            self.clf.export_model(self.model_path) # Corrected: pass model_path as a positional argument
+            # Export the Keras model from AutoKeras
+            exported_model = self.clf.export_model()
+            if exported_model is None:
+                raise RuntimeError("AutoKeras export_model() returned None. Cannot save model.")
+            
+            # Save the exported Keras model to the specified path
+            exported_model.save(self.model_path)
             print("Model exported successfully.")
             return True
         except Exception as e:
