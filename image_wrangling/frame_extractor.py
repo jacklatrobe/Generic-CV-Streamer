@@ -11,15 +11,18 @@ import hashlib  # Added for hashing frames
 
 class FrameExtractor:
     """Extracts and saves frames from a video stream at specified intervals."""
-    def __init__(self, save_dir: str = "boat_ramp_frames", capture_every_sec: float = 2.0):
+    def __init__(self, save_dir: str = "boat_ramp_frames", capture_every_sec: float = 2.0, cv_processor=None):
         """Initializes the FrameExtractor.
 
         Args:
             save_dir: Directory to save the extracted frames.
             capture_every_sec: Interval in seconds at which to capture frames.
+            cv_processor: An optional instance of a CV processor class (e.g., LocalCVProcessor).
+                          If provided, its `process_image` method will be called after saving a frame.
         """
         self.save_dir = save_dir
         self.capture_every_sec = capture_every_sec
+        self.cv_processor = cv_processor  # Store the CV processor instance
         self.last_saved_frame_hash = None  # Initialize hash for comparison
         os.makedirs(self.save_dir, exist_ok=True)
 
@@ -34,6 +37,7 @@ class FrameExtractor:
 
         Handles FFmpeg messages by printing a user-friendly note for common CDN warnings
         and printing other FFmpeg messages to stderr.
+        It also implements an exponential backoff strategy for retrying stream reads.
 
         Args:
             stream_url: The URL of the video stream to capture frames from.
@@ -52,6 +56,11 @@ class FrameExtractor:
         original_stderr = sys.stderr
         stderr_capture = io.StringIO()
 
+        # Exponential backoff parameters
+        initial_retry_delay_sec = 1.0
+        max_retry_delay_sec = 60.0
+        current_retry_delay_sec = initial_retry_delay_sec
+
         try:
             while True:
                 sys.stderr = stderr_capture
@@ -69,10 +78,24 @@ class FrameExtractor:
                 stderr_capture.truncate(0)
 
                 if not ok:
-                    print("Stream read failed, retrying in 5s…")
-                    self.last_saved_frame_hash = None  # Reset hash on stream error to avoid false positives on reconnect
-                    time.sleep(5)
+                    print(f"Stream read failed. Retrying in {current_retry_delay_sec:.1f}s…")
+                    self.last_saved_frame_hash = None  # Reset hash on stream error
+                    time.sleep(current_retry_delay_sec)
+                    # Increase delay for next time, up to max
+                    current_retry_delay_sec = min(current_retry_delay_sec * 2, max_retry_delay_sec)
+                    # Re-open the capture object as it might be in an unrecoverable state
+                    cap.release()
+                    cap = cv2.VideoCapture(stream_url)
+                    if not cap.isOpened():
+                        print(f"Failed to re-open stream after {current_retry_delay_sec:.1f}s of retrying. Waiting before next attempt...")
+                        time.sleep(current_retry_delay_sec) # Wait again before trying to re-initialize
+                        current_retry_delay_sec = min(current_retry_delay_sec * 2, max_retry_delay_sec)
+                    else:
+                        print("Successfully re-opened stream.")
                     continue
+                
+                # If frame read was successful, reset retry delay
+                current_retry_delay_sec = initial_retry_delay_sec
 
                 current_time = time.time()
                 if current_time - last_save_time >= self.capture_every_sec:
@@ -90,6 +113,17 @@ class FrameExtractor:
                     last_save_time = current_time
                     self.last_saved_frame_hash = current_frame_hash
                     print(f"Saved {file_path}")
+
+                    # If a CV processor is provided, process the newly saved image
+                    if self.cv_processor and self.cv_processor.model_trained_or_loaded:
+                        try:
+                            print(f"  Processing with CV: {file_path}")
+                            cv_results = self.cv_processor.process_image(file_path)
+                            print(f"  CV Results: {cv_results}")
+                        except Exception as e:
+                            print(f"  Error during CV processing for {file_path}: {e}")
+                    elif self.cv_processor and not self.cv_processor.model_trained_or_loaded:
+                        print(f"  CV processor available but model not ready. Skipping processing for {file_path}")
 
         except KeyboardInterrupt:
             print(f"\nStopped – {frame_count} images saved.")
