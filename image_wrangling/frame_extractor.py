@@ -115,14 +115,14 @@ class FrameExtractor:
                     print(f"Saved {file_path}")
 
                     # If a CV processor is provided, process the newly saved image
-                    if self.cv_processor and self.cv_processor.model_trained_or_loaded:
+                    if self.cv_processor and self.cv_processor.model_ready_for_inference:
                         try:
                             print(f"  Processing with CV: {file_path}")
                             cv_results = self.cv_processor.process_image(file_path)
                             print(f"  CV Results: {cv_results}")
                         except Exception as e:
                             print(f"  Error during CV processing for {file_path}: {e}")
-                    elif self.cv_processor and not self.cv_processor.model_trained_or_loaded:
+                    elif self.cv_processor and not self.cv_processor.model_ready_for_inference:
                         print(f"  CV processor available but model not ready. Skipping processing for {file_path}")
 
         except KeyboardInterrupt:
