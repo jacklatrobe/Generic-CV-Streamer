@@ -91,7 +91,7 @@ class AutoKerasCVProcessor:
                 print(f"Using existing model at {self.model_path}. Skipping training.")
                 self.model_ready_for_inference = True
             else:
-                print(f"Error: No model found at {self.model_path} and retraining not requested. CV processing will not be available.")
+                print(f"Error: No model found at {self.model_path}. To train a new model, run the script with the --retrain-cv flag.")
                 self.model_ready_for_inference = False
 
         # Initialize inferencer if the model is ready
