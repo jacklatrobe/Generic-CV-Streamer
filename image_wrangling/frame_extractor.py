@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 import sys
 import io
+import hashlib  # Added for hashing frames
 
 class FrameExtractor:
     """Extracts and saves frames from a video stream at specified intervals."""
@@ -19,7 +20,14 @@ class FrameExtractor:
         """
         self.save_dir = save_dir
         self.capture_every_sec = capture_every_sec
+        self.last_saved_frame_hash = None  # Initialize hash for comparison
         os.makedirs(self.save_dir, exist_ok=True)
+
+    def _calculate_frame_hash(self, frame) -> str:
+        """Calculates a SHA256 hash for a given frame."""
+        if frame is None:
+            return ""
+        return hashlib.sha256(frame.tobytes()).hexdigest()
 
     def capture_frames_from_stream(self, stream_url: str):
         """Captures frames from the given stream URL and saves them.
@@ -62,28 +70,30 @@ class FrameExtractor:
 
                 if not ok:
                     print("Stream read failed, retrying in 5s…")
+                    self.last_saved_frame_hash = None  # Reset hash on stream error to avoid false positives on reconnect
                     time.sleep(5)
-                    # Optional: Consider re-initializing VideoCapture or attempting to reopen
-                    # cap.release()
-                    # cap = cv2.VideoCapture(stream_url)
-                    # if not cap.isOpened():
-                    #     print("Failed to reopen stream after error. Exiting.")
-                    #     break
-                    # print("Stream re-opened after error.")
                     continue
 
                 current_time = time.time()
                 if current_time - last_save_time >= self.capture_every_sec:
+                    current_frame_hash = self._calculate_frame_hash(frame)
+                    
+                    if current_frame_hash == self.last_saved_frame_hash:
+                        print(f"Skipped saving duplicate frame at {datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}")
+                        last_save_time = current_time
+                        continue
+
                     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
                     file_path = os.path.join(self.save_dir, f"frame_{timestamp}.jpg")
                     cv2.imwrite(file_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
                     frame_count += 1
                     last_save_time = current_time
+                    self.last_saved_frame_hash = current_frame_hash
                     print(f"Saved {file_path}")
 
         except KeyboardInterrupt:
             print(f"\nStopped – {frame_count} images saved.")
         finally:
-            sys.stderr = original_stderr # Ensure stderr is restored
+            sys.stderr = original_stderr  # Ensure stderr is restored
             cap.release()
             print("Video stream capture released.")

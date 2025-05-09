@@ -7,7 +7,8 @@ class YouTubeDownloader:
     """A class to encapsulate YouTube stream URL retrieval using yt-dlp."""
     def __init__(self, quiet: bool = True):
         self.ydl_opts = {
-            'format': 'best[ext=mp4]/best',  # Selects the best MP4 stream
+            # Try for 1080p, then 720p, then best MP4, then overall best
+            'format': 'best[height>=1080][ext=mp4]/best[height>=720][ext=mp4]/best[ext=mp4]/best',
             'quiet': quiet,
         }
 
