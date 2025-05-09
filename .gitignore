@@ -23,6 +23,7 @@ ENV/
 /data/
 /boat_ramp_frames/
 /autokeras_boat_ramp/
+/gpt*.json
 
 # Environment variables
 .env
