@@ -115,21 +115,50 @@ class FrameExtractor:
                     print(f"Saved {file_path}")
 
                     # If a CV processor is provided, process the newly saved image
-                    if self.cv_processor and self.cv_processor.model_ready_for_inference:
-                        try:
-                            print(f"  Processing with CV: {file_path}")
-                            cv_results = self.cv_processor.process_image(file_path)
-                            
-                            # Only log results if we have a confident match
-                            if cv_results["tags"][0] != "no_confident_match" and cv_results["confidence"] >= self.cv_processor.inferencer.confidence_threshold:
-                                print(f"  CV Results: {cv_results}")
-                            else:
-                                print(f"  No confident match found (confidence: {cv_results['confidence']:.4f})")
+                    if self.cv_processor:
+                        is_ready = False
+                        backend_name = "Unknown CV"
+                        if hasattr(self.cv_processor, 'model_ready_for_inference'): # For AutoKeras
+                            is_ready = self.cv_processor.model_ready_for_inference
+                            backend_name = "Local (AutoKeras)"
+                        elif hasattr(self.cv_processor, 'api_ready_for_inference'): # For Google CV
+                            is_ready = self.cv_processor.api_ready_for_inference
+                            backend_name = "Google CV"
+
+                        if is_ready:
+                            try:
+                                print(f"  Processing with {backend_name}: {file_path}")
+                                cv_results = self.cv_processor.process_image(file_path)
                                 
-                        except Exception as e:
-                            print(f"  Error during CV processing for {file_path}: {e}")
-                    elif self.cv_processor and not self.cv_processor.model_ready_for_inference:
-                        print(f"  CV processor available but model not ready. Skipping processing for {file_path}")
+                                confidence_threshold_to_use = 0.7 # Default
+                                if hasattr(self.cv_processor, 'inferencer') and self.cv_processor.inferencer and \
+                                   hasattr(self.cv_processor.inferencer, 'confidence_threshold'):
+                                    confidence_threshold_to_use = self.cv_processor.inferencer.confidence_threshold
+                                
+                                if cv_results and cv_results.get("tags") and cv_results["tags"]:
+                                    first_tag = cv_results["tags"][0]
+                                    negative_tags = ["no_confident_match", "no_confident_match_google", "no_labels_from_google"]
+                                    is_error_tag = first_tag.startswith("error_")
+
+                                    if not is_error_tag and first_tag not in negative_tags and \
+                                       cv_results.get("confidence", 0.0) >= confidence_threshold_to_use:
+                                        print(f"  {backend_name} Results: {cv_results}")
+                                    else:
+                                        # For no_confident_match_google, confidence might be for the top non-target label
+                                        actual_confidence = cv_results.get('confidence', 0.0)
+                                        if first_tag in negative_tags and first_tag != "no_labels_from_google": # it has some confidence score
+                                            print(f"  {backend_name}: No target class met threshold (tag: {first_tag}, confidence: {actual_confidence:.4f})")
+                                        elif is_error_tag or first_tag == "no_labels_from_google":
+                                            print(f"  {backend_name}: Error or no labels (tag: {first_tag}, confidence: {actual_confidence:.4f})")
+                                        else: # Low confidence for a target class
+                                            print(f"  {backend_name}: Low confidence for match (tag: {first_tag}, confidence: {actual_confidence:.4f})")
+                                else:
+                                    print(f"  {backend_name} processing returned unexpected result format: {cv_results}")
+                                    
+                            except Exception as e:
+                                print(f"  Error during {backend_name} processing for {file_path}: {e}")
+                        else:
+                            print(f"  CV processor ({backend_name}) available but not ready. Skipping processing for {file_path}")
 
         except KeyboardInterrupt:
             print(f"\nStopped – {frame_count} images saved.")

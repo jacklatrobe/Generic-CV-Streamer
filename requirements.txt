@@ -5,3 +5,4 @@ tensorflow
 Pillow
 beautifulsoup4
 requests
+google-cloud-vision
