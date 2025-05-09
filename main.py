@@ -28,9 +28,9 @@ def main(args):
 
     from downloading.downloader import YouTubeDownloader
     from image_wrangling.frame_extractor import FrameExtractor
-    # Conditionally import LocalCVProcessor only if not --no-cv
+    # Conditionally import AutoKerasCVProcessor only if not --no-cv
     if not args.no_cv:
-        from computer_vision.cv_processor import LocalCVProcessor
+        from computer_vision import AutoKerasCVProcessor
 
     # Initialize the components
     downloader = YouTubeDownloader()
@@ -38,8 +38,9 @@ def main(args):
     cv_processor_instance = None
     if not args.no_cv:
         print("Initializing Computer Vision processor...")
-        cv_processor_instance = LocalCVProcessor()
-        if not cv_processor_instance.model_trained_or_loaded:
+        # Updated instantiation and attribute check
+        cv_processor_instance = AutoKerasCVProcessor(force_train=args.force_train_cv) 
+        if not cv_processor_instance.model_ready_for_inference:
             print("CV Model is not ready. Frame processing will not occur if model training failed or data was unavailable.")
     else:
         print("Computer Vision processing is disabled by command-line argument.")
@@ -76,6 +77,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="YouTube Stream Frame Capturer and CV Processor.")
     parser.add_argument("--no-cv", action="store_true", 
                         help="Disable Computer Vision processing. Only captures and saves frames.")
+    parser.add_argument("--force-train-cv", action="store_true",
+                        help="Force retraining of the CV model even if a model file exists.")
     
     # Potentially add other arguments here later, e.g., for YOUTUBE_URL, SAVE_DIR, etc.
     
