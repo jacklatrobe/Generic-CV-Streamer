@@ -122,6 +122,13 @@ class AutoKerasInferencer:
             with tensorflow.keras.utils.custom_object_scope(ak.CUSTOM_OBJECTS):
                 prediction = self.clf.predict(img_array)
             
+            # Print confidence for all classes to verify model is considering all classes
+            print(f"Confidence scores for {image_path}:")
+            for i, class_name in enumerate(self.class_names):
+                if i < len(prediction[0]):
+                    conf = float(prediction[0][i])
+                    print(f"  - {class_name}: {conf:.4f} ({conf*100:.1f}%)")
+            
             predicted_label_index = np.argmax(prediction[0])
             confidence = float(np.max(prediction[0]))
             
