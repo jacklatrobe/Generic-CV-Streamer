@@ -80,11 +80,53 @@ class LocalCVProcessor:
             print("Error: Class names not determined. Cannot create dataset. Ensure data subdirectories exist.")
             return
         print(f"Class names for training: {self.class_names}")
+
+        # Count total number of images
+        total_images = 0
+        image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif') # Common image extensions
+        for class_name in self.class_names:
+            class_path = os.path.join(self.data_dir, class_name)
+            if os.path.isdir(class_path):
+                try:
+                    total_images += len([
+                        name for name in os.listdir(class_path)
+                        if os.path.isfile(os.path.join(class_path, name)) and name.lower().endswith(image_extensions)
+                    ])
+                except OSError:
+                    print(f"Warning: Could not access or list files in {class_path}")
+                    continue
+        
+        print(f"Found {total_images} total training image files.")
+
+        if total_images == 0:
+            print("Error: No training images found. Skipping training.")
+            return
+        
+        if total_images == 1:
+            print("ERROR: Only 1 image found. AutoKeras requires the dataset to be splittable into at least 2 batches. Training cannot proceed.")
+            return
+
+        # Dynamically set batch_size
+        # AutoKeras's fit method needs the input dataset to have at least 2 batches to perform its own split.
+        # Number of batches from image_dataset_from_directory = ceil(total_images / batch_size).
+        
+        batch_size: int
+        if total_images < 4: # Covers 2 or 3 images
+            batch_size = 1 # This will produce total_images (2 or 3) batches from the loader.
+            print(f"WARNING: Very few training images ({total_images}). Using batch_size=1. Model fit may be poor and training unstable.")
+        else: # total_images >= 4
+            # Set batch_size to half the images, capped at 32, ensuring at least 1.
+            # This ensures image_dataset_from_directory produces at least 2 batches.
+            batch_size = min(total_images // 2, 32)
+            batch_size = max(1, batch_size) # Ensure batch_size is at least 1.
+            if total_images < 50:
+                print(f"WARNING: Low number of training images ({total_images}). Using batch_size={batch_size}. Model fit may not be optimal. Consider adding more data.")
+            elif batch_size < 4 and total_images >= 20: 
+                print(f"Note: Using a small batch_size={batch_size} due to dataset size relative to cap (32).")
         
         try:
-            # Define image size and batch size - these can be tuned
-            image_size = (256, 256) # AutoKeras will likely resize, but good to be explicit for dataset loading
-            batch_size = 32
+            # Define image size
+            image_size = (256, 256)
 
             print(f"Loading training data from {self.data_dir} with image_size={image_size} and batch_size={batch_size}")
             
