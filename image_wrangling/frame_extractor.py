@@ -119,7 +119,13 @@ class FrameExtractor:
                         try:
                             print(f"  Processing with CV: {file_path}")
                             cv_results = self.cv_processor.process_image(file_path)
-                            print(f"  CV Results: {cv_results}")
+                            
+                            # Only log results if we have a confident match
+                            if cv_results["tags"][0] != "no_confident_match" and cv_results["confidence"] >= self.cv_processor.inferencer.confidence_threshold:
+                                print(f"  CV Results: {cv_results}")
+                            else:
+                                print(f"  No confident match found (confidence: {cv_results['confidence']:.4f})")
+                                
                         except Exception as e:
                             print(f"  Error during CV processing for {file_path}: {e}")
                     elif self.cv_processor and not self.cv_processor.model_ready_for_inference:
