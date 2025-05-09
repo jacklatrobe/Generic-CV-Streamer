@@ -29,19 +29,17 @@ class AutoKerasCVProcessor:
     It determines class names from the data directory structure.
     """
 
-    def __init__(self, force_train=False, max_trials=3, epochs=10):
+    def __init__(self, retrain_model=False, max_trials=3, epochs=10):
         """
         Initializes the AutoKerasCVProcessor.
 
-        Determines if a model needs to be trained or if an existing one can be loaded.
-        If training is required (either `force_train` is True or no model exists at
-        `self.model_path`), it instantiates and uses `AutoKerasTrainer`.
-        After ensuring a model is available (either trained or pre-existing),
-        it sets up `AutoKerasInferencer` for processing images/frames.
+        Determines if a model needs to be trained based on the `retrain_model` flag
+        or if an existing one can be loaded. If `retrain_model` is False and no model
+        exists, an error state is set, and inference will not be available.
 
         Args:
-            force_train (bool, optional): If True, training will be forced even if a
-                                          model file already exists at `self.model_path`.
+            retrain_model (bool, optional): If True, training will be performed.
+                                          If False, an existing model is expected.
                                           Defaults to False.
             max_trials (int, optional): Maximum number of different Keras Models for
                                         AutoKeras to try during the training phase.
@@ -71,13 +69,9 @@ class AutoKerasCVProcessor:
         self.inferencer = None
         self.model_ready_for_inference = False
 
-        # Training logic: train if forced or if the model file doesn't exist.
-        if force_train or not os.path.exists(self.model_path):
-            if force_train:
-                print(f"Training is forced for model: {self.model_path}")
-            else:
-                print(f"Model not found at {self.model_path}. Training required.")
-            
+        # Training logic
+        if retrain_model:
+            print(f"Retraining model: {self.model_path}")
             trainer = AutoKerasTrainer(
                 data_dir=self.data_dir, 
                 model_path=self.model_path, # This path now points to data/models/
@@ -92,9 +86,13 @@ class AutoKerasCVProcessor:
             else:
                 print("Training failed or model was not exported. Inference will not be available.")
                 self.model_ready_for_inference = False # Explicitly set
-        else:
-            print(f"Model already exists at {self.model_path}. Skipping training.")
-            self.model_ready_for_inference = True
+        else: # Not retraining, try to use existing model
+            if os.path.exists(self.model_path):
+                print(f"Using existing model at {self.model_path}. Skipping training.")
+                self.model_ready_for_inference = True
+            else:
+                print(f"Error: No model found at {self.model_path} and retraining not requested. CV processing will not be available.")
+                self.model_ready_for_inference = False
 
         # Initialize inferencer if the model is ready
         if self.model_ready_for_inference:
@@ -187,10 +185,10 @@ if __name__ == '__main__':
                 except Exception as e:
                     print(f"Could not create dummy image {dummy_image_path}: {e}")
     
-    # --- Test Case 1: Force training ---
-    print("\n--- Testing with force_train=True (quick training) ---")
+    # --- Test Case 1: Retrain model ---
+    print("\n--- Testing with retrain_model=True (quick training) ---")
     # Using minimal trials/epochs for faster testing
-    processor_train = AutoKerasCVProcessor(force_train=True, max_trials=1, epochs=1) 
+    processor_train = AutoKerasCVProcessor(retrain_model=True, max_trials=1, epochs=1) 
 
     if processor_train.model_ready_for_inference:
         # Test with a dummy image from one of the classes
@@ -208,12 +206,12 @@ if __name__ == '__main__':
         result_frame = processor_train.process_frame(dummy_frame)
         print(f"Result for dummy frame: {result_frame}")
     else:
-        print("Skipping inference tests as model training failed or model was not ready after forced training.")
+        print("Skipping inference tests as model training failed or model was not ready after retraining.")
 
     # --- Test Case 2: Load existing model (if training was successful) ---
     if processor_train.model_ready_for_inference: # Proceed only if the first training created a model
-        print("\n--- Testing with existing model (force_train=False) ---")
-        processor_load = AutoKerasCVProcessor(force_train=False) # Should load the model trained above
+        print("\n--- Testing with existing model (retrain_model=False) ---")
+        processor_load = AutoKerasCVProcessor(retrain_model=False) # Should load the model trained above
         if processor_load.model_ready_for_inference:
             test_image_path_boats = os.path.join(base_data_dir, 'boats', 'dummy_boats_0.jpg')
             if os.path.exists(test_image_path_boats):

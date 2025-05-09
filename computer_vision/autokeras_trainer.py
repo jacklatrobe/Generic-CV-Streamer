@@ -125,7 +125,7 @@ class AutoKerasTrainer:
             
             print(f"Exporting model to {self.model_path}...")
             # Exports the best model found by AutoKeras during the 'fit' process.
-            self.clf.export_model(filepath=self.model_path)
+            self.clf.export_model(self.model_path) # Corrected: pass model_path as a positional argument
             print("Model exported successfully.")
             return True
         except Exception as e:

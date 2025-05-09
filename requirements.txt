@@ -3,3 +3,5 @@ opencv-python
 autokeras
 tensorflow
 Pillow
+beautifulsoup4
+requests

@@ -13,7 +13,12 @@ class YouTubeDownloader:
         }
 
     def get_stream_url(self, video_url: str) -> str:
-        """Return the direct video stream URL (best available mp4).
+        """Return the direct video stream URL.
+
+        For live streams, this URL typically points to a manifest file (e.g., HLS .m3u8)
+        which allows a video player to access the most recent segments of the stream (the live edge).
+        The player (e.g., OpenCV in FrameExtractor) is responsible for handling the manifest
+        to play the live content.
 
         Args:
             video_url: The URL of the YouTube video.
