@@ -22,6 +22,7 @@ ENV/
 # Project specific
 /data/
 /boat_ramp_frames/
+/autokeras_boat_ramp/
 
 # Environment variables
 .env
