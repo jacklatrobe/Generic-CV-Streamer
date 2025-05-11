@@ -1,0 +1,12 @@
+{
+    "class_names": [
+        "boat_ramp_occupied",
+        "boat_ramp_vacant"
+    ],
+    "save_dir": "boat_ramp_frames",
+    "capture_every_sec": 2.0,
+    "credentials_path": "service_account.json",
+    "autokeras_model_dir": "data/models/autokeras_model/",
+    "autokeras_model_filename": "model.keras",
+    "autokeras_image_data_dir": "data/image_data/"
+}

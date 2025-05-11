@@ -2,8 +2,7 @@
 Handles the training and exporting of an AutoKeras image classification model.
 """
 import os
-import numpy as np
-import tensorflow
+import tensorflow as tf
 import autokeras as ak
 import traceback
 
@@ -12,129 +11,173 @@ class AutoKerasTrainer:
     Manages the training process for an AutoKeras ImageClassifier,
     including data loading, model fitting, and exporting the trained model.
     """
-    def __init__(self, data_dir, model_path, class_names, project_name="autokeras_boat_ramp_project", max_trials=3, epochs=10):
+    def __init__(self, image_data_dir, model_save_path, class_names, max_trials=10, epochs=10):
         """
         Initializes the AutoKerasTrainer.
 
         Args:
-            data_dir (str): Path to the directory containing training image data,
-                            organized into subdirectories named by class.
-            model_path (str): Path where the trained Keras model should be saved.
-            class_names (list): A list of strings representing the class names,
-                                derived from the subdirectory names in data_dir.
-            project_name (str, optional): Name for the AutoKeras project. This is
-                                          used by AutoKeras to store temporary files
-                                          related to the hyperparameter tuning trials.
-                                          Defaults to "autokeras_boat_ramp_project".
-            max_trials (int, optional): Maximum number of different Keras models
-                                        for AutoKeras to try. Defaults to 3.
-            epochs (int, optional): Number of epochs to train each model for.
-                                    Defaults to 10.
+            image_data_dir (str): Path to the root directory of the image dataset.
+                                  This directory should contain subdirectories for each class.
+            model_save_path (str): Path where the trained Keras model will be saved (e.g., 'model.keras').
+            class_names (list): A list of class names. These should correspond to the
+                                subdirectory names in image_data_dir.
+            max_trials (int): The maximum number of different Keras models to try.
+            epochs (int): The number of epochs to train each model.
         """
-        self.data_dir = data_dir
-        self.model_path = model_path
-        self.class_names = class_names
-        self.project_name = project_name # Used by AutoKeras for its working files
+        self.image_data_dir = image_data_dir
+        self.model_save_path = model_save_path
+        self.class_names = class_names # Expected to be provided
         self.max_trials = max_trials
         self.epochs = epochs
-        # Initialize the AutoKeras ImageClassifier. Overwrite ensures fresh trials if project_name dir exists.
-        self.clf = ak.ImageClassifier(
-            max_trials=self.max_trials, 
-            overwrite=True,  # Set to False if you want to resume previous HPO search
-            project_name=self.project_name,
-            directory=os.path.dirname(self.model_path) # Store AK project near the model
-        )
-
-    def train_and_export(self):
-        """
-        Trains the AutoKeras image classification model using data from self.data_dir
-        and exports the best model found to self.model_path.
-
-        The training data is loaded using tensorflow.keras.utils.image_dataset_from_directory.
-        Batch size is dynamically adjusted based on the number of images.
-
-        Returns:
-            bool: True if training and export were successful, False otherwise.
-        """
-        if not os.path.exists(self.data_dir) or not os.listdir(self.data_dir):
-            print(f"Data directory {self.data_dir} is empty or does not exist. Skipping training.")
-            return False
 
         if not self.class_names:
-            print("Error: Class names not determined. Cannot create dataset. Ensure data subdirectories exist.")
-            return False
-        print(f"Class names for training: {self.class_names}")
+            raise ValueError("class_names must be provided and cannot be empty.")
+        if not os.path.isdir(self.image_data_dir):
+            # Create the directory if it doesn't exist, as per previous logic for dummy data.
+            # However, for actual training, it should ideally exist and contain data.
+            print(f"Warning: Image data directory '{self.image_data_dir}' not found. It will be created if dummy data generation is run.")
+            # os.makedirs(self.image_data_dir, exist_ok=True) # Consider if this is the right place or should be handled by caller
 
-        total_images = 0
-        image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')
-        for class_name_item in self.class_names: # Renamed to avoid conflict with outer scope if any
-            class_path = os.path.join(self.data_dir, class_name_item)
-            if os.path.isdir(class_path):
-                try:
-                    total_images += len([
-                        name for name in os.listdir(class_path)
-                        if os.path.isfile(os.path.join(class_path, name)) and name.lower().endswith(image_extensions)
-                    ])
-                except OSError:
-                    print(f"Warning: Could not access or list files in {class_path}")
-                    continue
-        
-        print(f"Found {total_images} total training image files.")
-        if total_images == 0:
-            print("Error: No training images found. Skipping training.")
-            return False
-        if total_images == 1: # AutoKeras needs to split data, so >1 image is essential
-            print("ERROR: Only 1 image found. AutoKeras requires the dataset to be splittable. Training cannot proceed.")
-            return False
+    def _prepare_datasets(self):
+        """
+        Prepares training and testing datasets from the image_data_dir.
+        This version uses autokeras.image_dataset_from_directory.
+        Assumes a directory structure like:
+        image_data_dir/
+            class_a/
+                image1.jpg
+                image2.jpg
+            class_b/
+                image3.jpg
+                image4.jpg
+        """
+        if not os.path.exists(self.image_data_dir) or not any(os.scandir(self.image_data_dir)):
+            print(f"Error: Image data directory '{self.image_data_dir}' is empty or does not exist.")
+            print("Please ensure it contains subdirectories for each class, populated with images.")
+            # Example: Create dummy data if it's missing (for testing/demonstration)
+            # self._create_dummy_data_if_needed() # This was part of the example, decide if it belongs here for production
+            # if not os.path.exists(self.image_data_dir) or not any(os.scandir(self.image_data_dir)):
+            return None, None # Return None if data is still not available
 
-        batch_size: int
-        if total_images < 4: # Covers 2 or 3 images; ensures at least 2 batches if batch_size=1
-            batch_size = 1
-            print(f"WARNING: Very few training images ({total_images}). Using batch_size=1.")
-        else: # total_images >= 4
-            # Set batch_size to half the images, capped at 32, ensuring at least 1.
-            # This aims to produce at least 2 batches for AutoKeras's internal validation split.
-            batch_size = min(total_images // 2, 32) 
-            batch_size = max(1, batch_size) # Ensure batch_size is at least 1.
-            if total_images < 50:
-                print(f"WARNING: Low number of training images ({total_images}). Using batch_size={batch_size}.")
-        
+        # Ensure class_names match directory names for safety, though image_dataset_from_directory infers them.
+        # This is a good check if class_names are passed externally.
+        # for name in self.class_names:
+        #     if not os.path.isdir(os.path.join(self.image_data_dir, name)):
+        #         print(f"Warning: Directory for class '{name}' not found in '{self.image_data_dir}'.")
+
         try:
-            image_size = (256, 256)
-            print(f"Loading training data from {self.data_dir} with image_size={image_size} and batch_size={batch_size}")
-            
-            train_dataset = tensorflow.keras.utils.image_dataset_from_directory(
-                self.data_dir,
-                labels='inferred', # Infers labels from directory names
-                label_mode='categorical', # For multi-class classification with AutoKeras
-                class_names=self.class_names, # Ensures consistent class indexing
-                image_size=image_size,
-                batch_size=batch_size,
-                shuffle=True,
-                seed=123
+            # Load the dataset using AutoKeras utility, splitting into training and testing
+            # The utility will infer class names from directory structure if not explicitly passed,
+            # but it's good to be aware of how `class_names` (passed to __init__) relates.
+            # `labels='inferred'` is default and uses dir names as labels.
+            # `label_mode='categorical'` for multi-class classification (one-hot encoded).
+            # `image_size` should match what the model expects (AutoKeras handles this internally to some extent).
+            # `validation_split` creates a test set from the training data.
+            print(f"Loading images from: {self.image_data_dir}")
+            train_dataset = ak.image_dataset_from_directory(
+                self.image_data_dir,
+                validation_split=0.2, # Use 20% of the data for validation/testing
+                subset="training",
+                seed=123, # For reproducibility
+                image_size=(256, 256), # Standardize image size
+                batch_size=32, # Adjust batch size based on memory
+                label_mode='categorical', # For multi-class classification
+                class_names=self.class_names # Explicitly pass class names
+            )
+            test_dataset = ak.image_dataset_from_directory(
+                self.image_data_dir,
+                validation_split=0.2,
+                subset="validation",
+                seed=123,
+                image_size=(256, 256),
+                batch_size=32,
+                label_mode='categorical',
+                class_names=self.class_names # Explicitly pass class names
             )
             
-            for images, labels in train_dataset.take(1):
-                print(f"Dataset batch shape: images={images.shape}, labels={labels.shape}")
-                break
+            # Log the found class names from the dataset to confirm
+            if hasattr(train_dataset, 'class_names'):
+                print(f"Dataset loaded. Found class names: {train_dataset.class_names}")
+                if set(train_dataset.class_names) != set(self.class_names):
+                    print(f"Warning: Class names from dataset ({train_dataset.class_names}) do not exactly match provided class_names ({self.class_names}).")
+            else:
+                print("Class names not directly available on dataset object after loading.")
 
-            # AutoKeras ImageClassifier can accept a tf.data.Dataset directly
-            print("Fitting AutoKeras model with the loaded dataset...")
-            self.clf.fit(train_dataset, epochs=self.epochs)
-            print("Model training complete.")
+            # Prefetch for performance
+            train_dataset = train_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
+            test_dataset = test_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
             
-            print(f"Exporting model to {self.model_path}...")
-            # Export the Keras model from AutoKeras
-            exported_model = self.clf.export_model()
-            if exported_model is None:
-                raise RuntimeError("AutoKeras export_model() returned None. Cannot save model.")
-            
-            # Save the exported Keras model to the specified path
-            exported_model.save(self.model_path)
-            print("Model exported successfully.")
-            return True
+            return train_dataset, test_dataset
         except Exception as e:
-            print(f"An error occurred during model training or export: {e}")
+            print(f"Error preparing dataset from '{self.image_data_dir}': {e}")
+            print("Ensure the directory structure is correct (subdirectories for classes) and images are valid.")
+            return None, None
+
+    def train(self):
+        """
+        Trains an AutoKeras ImageClassifier model and saves it.
+
+        Returns:
+            tensorflow.keras.Model: The trained Keras model, or None if training failed.
+        """
+        print("Preparing datasets for training...")
+        train_dataset, test_dataset = self._prepare_datasets()
+
+        if train_dataset is None or test_dataset is None:
+            print("Failed to prepare datasets. Aborting training.")
+            return None
+
+        print(f"Starting AutoKeras training with max_trials={self.max_trials} and epochs={self.epochs}.")
+        try:
+            # Initialize ImageClassifier
+            # Ensure num_classes is correctly set based on the provided class_names
+            clf = ak.ImageClassifier(
+                overwrite=True, 
+                max_trials=self.max_trials, 
+                project_name="autokeras_boat_ramp_project", # Can be customized
+                # num_classes=len(self.class_names) # AutoKeras usually infers this from data
+            )
+
+            # Feed the model with training data
+            # Early stopping is implicitly handled by AutoKeras during the search phase
+            # and can be configured further if needed via callbacks.
+            clf.fit(train_dataset, epochs=self.epochs, validation_data=test_dataset)
+
+            print("Training complete. Evaluating model...")
+            loss, accuracy = clf.evaluate(test_dataset)
+            print(f"Accuracy on test set: {accuracy*100:.2f}%")
+
+            print("Exporting the best model...")
+            # Export the model as a Keras model (TensorFlow SavedModel format)
+            # The model is saved to a directory if model_save_path ends with '/', 
+            # or as an H5 file if it ends with '.h5'. For '.keras', it's the new Keras v3 format.
+            exported_model = clf.export_model()
+            
+            # Ensure the directory for the model_save_path exists
+            model_save_dir = os.path.dirname(self.model_save_path)
+            if model_save_dir and not os.path.exists(model_save_dir):
+                os.makedirs(model_save_dir, exist_ok=True)
+            
+            try:
+                exported_model.save(self.model_save_path, save_format="tf") # Explicitly use SavedModel format
+                print(f"Model saved successfully to {self.model_save_path}")
+                return exported_model # Return the Keras model object
+            except Exception as e:
+                print(f"Error saving exported model to {self.model_save_path}: {e}")
+                # Fallback or alternative save if needed, e.g., H5, though SavedModel is preferred.
+                # try:
+                #     h5_path = self.model_save_path.replace(".keras", "") + ".h5"
+                #     exported_model.save(h5_path)
+                #     print(f"Model saved in H5 format to {h5_path} as a fallback.")
+                #     return exported_model
+                # except Exception as e2:
+                #     print(f"Error saving model in H5 format: {e2}")
+                return None # Indicate failure to save
+
+        except Exception as e:
+            print(f"An error occurred during the training process: {e}")
+            # Log the full traceback for debugging if necessary
+            import traceback
             traceback.print_exc()
-            return False
+            return None
 

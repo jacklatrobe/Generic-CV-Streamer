@@ -5,6 +5,7 @@ Handles inference using Google Cloud Vision API.
 import os
 import io
 import shutil
+import json  # Added import for json
 from datetime import datetime
 from google.cloud import vision
 import numpy as np
@@ -12,92 +13,59 @@ import cv2
 
 class GoogleCVInferencer:
     """
-    Manages using Google Cloud Vision API for image labeling and object localization.
+    Manages performing inference using Google Cloud Vision API.
     """
-    def __init__(self, class_names, credentials_path=None):
+    def __init__(self, credentials_path): # Removed class_names from parameters
         """
         Initializes the GoogleCVInferencer.
 
         Args:
-            class_names (list): A list of strings representing the class names
-                                that the application is interested in.
-                                Google Vision API might return more labels.
-            credentials_path (str, optional): Path to Google Cloud service account JSON file.
-                                            If None, attempts to use default credentials.
+            credentials_path (str): Path to the Google Cloud credentials JSON file.
         """
-        self.class_names = class_names # These are the target classes we are interested in
+        self.credentials_path = credentials_path
+        # self.class_names = class_names # Removed direct assignment
         self.client = None
-        self.api_ready = False
-        self.confidence_threshold = 0.7  # 70% confidence threshold for a label to be considered
-        self.use_object_localization = True  # Enable object localization by default
+        self.model_loaded = False
+        self.confidence_threshold = 0.7  # 70% confidence threshold
 
-        script_dir = os.path.dirname(__file__)
-        project_root = os.path.abspath(os.path.join(script_dir, ".."))
-        self.detections_base_dir = os.path.join(project_root, "data", "detections_google_cv")
-        self._create_detection_directories()
+        self._load_config() # Load class_names from config
+        self._initialize_client()
 
-        self._initialize_client(credentials_path)
-
-    def _create_detection_directories(self):
+    def _load_config(self):
         """
-        Creates directories for storing detected objects based on class names.
+        Loads class_names from config.json located at the project root.
         """
-        os.makedirs(self.detections_base_dir, exist_ok=True)
-        for class_name in self.class_names: # Create dirs for our target classes
-            os.makedirs(os.path.join(self.detections_base_dir, class_name), exist_ok=True)
-        # Removed creation of other_google_detections directory
-
-    def _save_detection(self, image_path, predicted_label, original_image_path_or_data):
-        """
-        Saves a copy of the detected image to the appropriate detection directory.
-
-        Args:
-            image_path (str): Path to the original image file (if processing a file)
-                              or None if processing a frame.
-            predicted_label (str): The predicted class label.
-            original_image_path_or_data (str or np.ndarray): Path to original image or frame data.
-        Returns:
-            str: Path to the saved detection file, or None if save failed.
-        """
+        # Assuming the script is in BoatRampTagger/computer_vision/
+        # Project root is two levels up from this file's directory.
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        config_path = os.path.join(project_root, "config.json")
+        
         try:
-            # Only proceed if the predicted label is in our target classes
-            if predicted_label not in self.class_names:
-                return None
-                
-            timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
-            
-            if image_path: # Processing an image file
-                filename = os.path.basename(image_path)
-                base_name, ext = os.path.splitext(filename)
-            else: # Processing a frame
-                base_name = "frame"
-                ext = ".jpg" # Assume saving as jpg
-
-            detection_dir = os.path.join(self.detections_base_dir, predicted_label)
-            detection_path = os.path.join(detection_dir, f"{base_name}_{timestamp}{ext}")
-
-            if isinstance(original_image_path_or_data, str): # it's a path
-                shutil.copy2(original_image_path_or_data, detection_path)
-            elif isinstance(original_image_path_or_data, np.ndarray): # it's frame data
-                cv2.imwrite(detection_path, original_image_path_or_data)
-            else:
-                print("Error saving detection: Invalid image data type.")
-                return None
-
-            print(f"Saved Google CV detection to {detection_path}")
-            return detection_path
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                self.class_names = config.get("class_names", [])
+                if not self.class_names:
+                    print(f"Warning: 'class_names' not found or empty in {config_path}. Detections might not be categorized correctly.")
+                else:
+                    print(f"Loaded class_names: {self.class_names} from {config_path}")
+        except FileNotFoundError:
+            print(f"Error: {config_path} not found. Please create it with 'class_names' list.")
+            self.class_names = [] # Default to empty list if config not found
+        except json.JSONDecodeError:
+            print(f"Error: Could not decode {config_path}. Please ensure it is valid JSON.")
+            self.class_names = [] # Default to empty list if JSON is invalid
         except Exception as e:
-            print(f"Error saving Google CV detection: {e}")
-            return None
+            print(f"An unexpected error occurred while loading config: {e}")
+            self.class_names = []
 
-    def _initialize_client(self, credentials_path=None):
+    def _initialize_client(self):
         """
         Initializes the Google Cloud Vision client.
         Sets `self.api_ready` to True if successful, False otherwise.
         """
         try:
-            if credentials_path:
-                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+            if self.credentials_path:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = self.credentials_path
                 self.client = vision.ImageAnnotatorClient()
                 print("Google Cloud Vision client initialized using provided credentials.")
             else:
