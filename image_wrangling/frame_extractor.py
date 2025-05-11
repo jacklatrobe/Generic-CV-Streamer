@@ -118,12 +118,27 @@ class FrameExtractor:
                     if self.cv_processor:
                         is_ready = False
                         backend_name = "Unknown CV"
-                        if hasattr(self.cv_processor, 'model_ready_for_inference'): # For AutoKeras
+                        # Check for AutoKeras
+                        if hasattr(self.cv_processor, 'model_ready_for_inference'): 
                             is_ready = self.cv_processor.model_ready_for_inference
                             backend_name = "Local (AutoKeras)"
-                        elif hasattr(self.cv_processor, 'api_ready_for_inference'): # For Google CV
+                        # Check for GoogleCVProcessor or other cloud processors that might use 'api_ready_for_inference'
+                        elif hasattr(self.cv_processor, 'api_ready_for_inference'): 
                             is_ready = self.cv_processor.api_ready_for_inference
-                            backend_name = "Google CV"
+                            # Attempt to get a more specific name if available (e.g. from GoogleCVProcessor)
+                            if hasattr(self.cv_processor, 'backend_name'):
+                                backend_name = self.cv_processor.backend_name
+                            else:
+                                backend_name = "Google CV" # Default if more specific name not found
+                        # Check for AzureCVInferencer or similar using 'api_ready'
+                        elif hasattr(self.cv_processor, 'api_ready'): 
+                            is_ready = self.cv_processor.api_ready
+                            # Try to get a more specific name, e.g. by checking class name
+                            if self.cv_processor.__class__.__name__ == "AzureCVInferencer":
+                                backend_name = "Azure CV"
+                            elif hasattr(self.cv_processor, 'backend_name'): # Fallback to a backend_name attribute
+                                backend_name = self.cv_processor.backend_name
+                            # else it remains "Unknown CV" if it's a new type with just 'api_ready'
 
                         if is_ready:
                             try:

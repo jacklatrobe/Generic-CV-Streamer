@@ -6,9 +6,12 @@ import io
 import json
 import cv2 # For frame processing
 import numpy as np
+import logging # Added
 from azure.ai.vision.imageanalysis import ImageAnalysisClient
 from azure.ai.vision.imageanalysis.models import VisualFeatures
 from azure.core.credentials import AzureKeyCredential
+
+logger = logging.getLogger(__name__) # Added
 
 class AzureCVInferencer:
     """
@@ -36,7 +39,8 @@ class AzureCVInferencer:
         Loads class_names from config.json located at the project root.
         Also loads confidence_threshold if specified.
         """
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        # Corrected project_root calculation
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         config_path = os.path.join(project_root, "config.json")
         
         try:
@@ -45,18 +49,18 @@ class AzureCVInferencer:
                 self.class_names = config.get("class_names", [])
                 self.confidence_threshold = float(config.get("azure_confidence_threshold", self.confidence_threshold))
                 if not self.class_names:
-                    print(f"Warning: 'class_names' not found or empty in {config_path}. Detections might not be categorized correctly.")
+                    logger.warning(f"'class_names' not found or empty in {config_path}. Detections might not be categorized correctly.")
                 else:
-                    print(f"Loaded class_names: {self.class_names} from {config_path}")
-                print(f"Azure confidence threshold set to: {self.confidence_threshold}")
+                    logger.info(f"Loaded class_names: {self.class_names} from {config_path}")
+                logger.info(f"Azure confidence threshold set to: {self.confidence_threshold}")
         except FileNotFoundError:
-            print(f"Error: {config_path} not found. Please create it with 'class_names' list. Using default class_names and threshold.")
+            logger.error(f"Configuration file {config_path} not found. Please create it with 'class_names' list. Using default class_names and threshold.")
         except json.JSONDecodeError:
-            print(f"Error: Could not decode {config_path}. Please ensure it is valid JSON. Using default class_names and threshold.")
+            logger.error(f"Could not decode {config_path}. Please ensure it is valid JSON. Using default class_names and threshold.")
         except ValueError:
-            print(f"Error: Invalid 'azure_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
+            logger.error(f"Invalid 'azure_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
         except Exception as e:
-            print(f"An unexpected error occurred while loading config: {e}. Using default class_names and threshold.")
+            logger.exception(f"An unexpected error occurred while loading config: {e}. Using default class_names and threshold.")
 
     def _initialize_client(self):
         """
@@ -65,7 +69,7 @@ class AzureCVInferencer:
         """
         try:
             if not os.path.exists(self.credentials_path):
-                print(f"Error: Azure credentials file not found at {self.credentials_path}")
+                logger.error(f"Azure credentials file not found at {self.credentials_path}")
                 self.api_ready = False
                 return
 
@@ -76,7 +80,7 @@ class AzureCVInferencer:
             key = credentials.get("api_key")
 
             if not endpoint or not key:
-                print("Error: 'endpoint' or 'api_key' missing in Azure credentials file.")
+                logger.error("'endpoint' or 'api_key' missing in Azure credentials file.")
                 self.api_ready = False
                 return
 
@@ -84,14 +88,13 @@ class AzureCVInferencer:
                 endpoint=endpoint,
                 credential=AzureKeyCredential(key)
             )
-            print("Azure Computer Vision client initialized successfully.")
+            logger.info("Azure Computer Vision client initialized successfully.")
             self.api_ready = True
         except json.JSONDecodeError:
-            print(f"Error: Could not decode Azure credentials file at {self.credentials_path}. Ensure it is valid JSON.")
+            logger.error(f"Could not decode Azure credentials file at {self.credentials_path}. Ensure it is valid JSON.")
             self.api_ready = False
         except Exception as e:
-            print(f"Failed to initialize Azure Computer Vision client: {e}. "
-                  "Ensure 'azure-ai-vision-imageanalysis' is installed and credentials are correct.")
+            logger.exception(f"Failed to initialize Azure Computer Vision client: {e}. Ensure 'azure-ai-vision-imageanalysis' is installed and credentials are correct.")
             self.api_ready = False
 
     def process_image(self, image_path: str):
@@ -108,10 +111,10 @@ class AzureCVInferencer:
                   Returns an error structure if processing fails.
         """
         if not self.api_ready or not self.client:
-            print("Azure CV API not available for processing.")
+            logger.warning("Azure CV API not available for processing.")
             return {"tags": ["error_api_not_ready"], "confidence": 0.0, "objects": []}
         if not os.path.exists(image_path):
-            print(f"Image path does not exist: {image_path}")
+            logger.error(f"Image path does not exist: {image_path}")
             return {"tags": ["error_image_not_found"], "confidence": 0.0, "objects": []}
 
         try:
@@ -121,7 +124,7 @@ class AzureCVInferencer:
             return self._analyze_image_data(image_data)
             
         except Exception as e:
-            print(f"Error processing image {image_path} with Azure CV: {e}")
+            logger.exception(f"Error processing image {image_path} with Azure CV: {e}")
             return {"tags": ["error_processing_azure_cv"], "confidence": 0.0, "objects": []}
 
     def process_frame(self, frame_data: np.ndarray):
@@ -135,19 +138,20 @@ class AzureCVInferencer:
             dict: A dictionary containing 'tags', 'confidence', and 'objects'.
         """
         if not self.api_ready or not self.client:
-            print("Azure CV API not available for processing.")
+            logger.warning("Azure CV API not available for processing.")
             return {"tags": ["error_api_not_ready"], "confidence": 0.0, "objects": []}
 
         try:
             is_success, buffer = cv2.imencode(".jpg", frame_data)
             if not is_success:
+                logger.error("Failed to encode frame to JPEG for Azure CV")
                 raise ValueError("Failed to encode frame to JPEG for Azure CV")
             image_data = buffer.tobytes()
 
             return self._analyze_image_data(image_data)
 
         except Exception as e:
-            print(f"Error processing frame with Azure CV: {e}")
+            logger.exception(f"Error processing frame with Azure CV: {e}")
             return {"tags": ["error_processing_azure_cv_frame"], "confidence": 0.0, "objects": []}
 
     def _analyze_image_data(self, image_data: bytes):
@@ -171,12 +175,12 @@ class AzureCVInferencer:
                     obj_name = detected_object.tags[0].name.lower() # Use first tag name as object name
                     obj_confidence = detected_object.tags[0].confidence
                 
-                # Bounding box: [x, y, w, h]
+                # Bounding box: [x, y, w, h] - Corrected attributes
                 bounding_box = [
                     detected_object.bounding_box.x,
                     detected_object.bounding_box.y,
-                    detected_object.bounding_box.w,
-                    detected_object.bounding_box.h
+                    detected_object.bounding_box.width, # Corrected: was .w
+                    detected_object.bounding_box.height # Corrected: was .h
                 ]
                 
                 processed_objects.append({
@@ -242,12 +246,12 @@ class AzureCVInferencer:
         Returns:
             str: Path to the saved detection file, or None.
         """
-        print(f"save_processed_frame called with result: {result}. Functionality not fully implemented for Azure yet.")
+        logger.info(f"save_processed_frame called with result: {result}. Functionality not fully implemented for Azure yet.")
         # Example logic (needs refinement based on actual requirements for saving):
         # if result and result.get("tags") and self.class_names:
         #     if any(tag in self.class_names for tag in result["tags"]) and result.get("confidence", 0) >= self.confidence_threshold:
         #         # ... implement saving logic similar to GoogleCVInferencer._save_detection ...
-        #         print(f"Placeholder: Would save frame for tags {result['tags']}")
+        #         logger.info(f"Placeholder: Would save frame for tags {result['tags']}")
         #         return "path/to/saved/azure_detection.jpg" 
         return None
 
