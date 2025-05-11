@@ -20,5 +20,6 @@
     "credentials_path": "service_account.json",
     "autokeras_model_dir": "data/models/autokeras_model/",
     "autokeras_model_filename": "model.keras",
-    "autokeras_image_data_dir": "data/image_data/"
+    "autokeras_image_data_dir": "data/image_data/",
+    "unexpand_detections": true
 }

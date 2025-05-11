@@ -145,3 +145,7 @@ class ConfigManager:
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise ValueError(f"Invalid format for expansion_map key '{key}': must be a list of strings.")
         return expansion_map
+
+    def get_unexpand_detections(self, default=True):
+        """Retrieves the 'unexpand_detections' setting."""
+        return self._config_data.get("unexpand_detections", default)

@@ -16,27 +16,76 @@ class GoogleCVInferencer:
     """
     Manages performing inference using Google Cloud Vision API.
     """
-    def __init__(self, credentials_path: str, class_names: list[str], detections_save_dir: str, confidence_threshold: float = 0.7):
+    def __init__(self, credentials_path: str, class_names: list[str], detections_save_dir: str, confidence_threshold: float = 0.7, expansion_map: dict = None, unexpand_detections: bool = True):
         """
         Initializes the GoogleCVInferencer.
 
         Args:
             credentials_path (str): Path to the Google Cloud credentials JSON file.
-            class_names (list[str]): List of target class names.
+            class_names (list[str]): List of original target class names.
             detections_save_dir (str): Directory to save detection crops.
             confidence_threshold (float): Minimum confidence for a detection to be considered.
+            expansion_map (dict, optional): Dictionary for expanding class names.
+            unexpand_detections (bool): Whether to unexpand detected names.
         """
         self.credentials_path = credentials_path
-        self.class_names = [name.lower() for name in class_names]
+        # self.class_names = [name.lower() for name in class_names] # Replaced by expansion logic
         self.detections_save_dir = detections_save_dir
         self.client = None
-        # self.model_loaded = False # This attribute doesn't seem to be used consistently for API readiness
-        self.api_ready = False # Use this to track if the client initialized correctly
+        self.api_ready = False
         self.confidence_threshold = confidence_threshold
-        self.use_object_localization = True
+        self.use_object_localization = True # This seems to be a fixed setting for Google CV
 
-        # self._load_config_class_names_and_save_dir() # Removed: config values now passed in
+        self.original_class_names = [name.lower() for name in class_names if isinstance(name, str)]
+        self.expansion_map = expansion_map if expansion_map else {}
+        self.unexpand_detections = unexpand_detections
+        self.expanded_class_names = []
+        self._reverse_expansion_map = {}
+
+        self._prepare_class_names_and_expansion()
         self._initialize_client()
+
+    def _prepare_class_names_and_expansion(self):
+        """
+        Prepares original and expanded class names based on provided names and expansion map.
+        Also prepares a reverse map for unexpansion.
+        """
+        if not self.original_class_names and self.expansion_map:
+            print("Warning: Expansion map provided to GoogleCVInferencer, but no original class names to expand. Expansion will not be applied.")
+            self.expanded_class_names = []
+            self._reverse_expansion_map = {}
+            return
+
+        if not self.expansion_map:
+            print("Info: No expansion map provided to GoogleCVInferencer. Expanded class names will be the same as original.")
+            self.expanded_class_names = list(self.original_class_names)
+            for name in self.original_class_names:
+                self._reverse_expansion_map[name] = name # Lowercase already handled for original_class_names
+            return
+
+        print(f"Info: Applying expansion map: {self.expansion_map} to original names: {self.original_class_names} for GoogleCVInferencer")
+        current_expanded_names = []
+        temp_reverse_map = {}
+        for original_name in self.original_class_names:
+            expanded_terms = self.expansion_map.get(original_name, [original_name])
+            for term in expanded_terms:
+                term_lower = term.lower()
+                current_expanded_names.append(term_lower)
+                if term_lower not in temp_reverse_map or len(original_name) < len(temp_reverse_map[term_lower]):
+                    temp_reverse_map[term_lower] = original_name
+        
+        self.expanded_class_names = sorted(list(set(current_expanded_names)))
+        self._reverse_expansion_map = temp_reverse_map
+        print(f"Info: Expanded class names for Google CV processing: {self.expanded_class_names}")
+        print(f"Info: Reverse expansion map for unexpanding (Google CV): {self._reverse_expansion_map}")
+
+    def _unexpand_detection_name(self, detected_name: str) -> str:
+        """
+        Unexpands a detected name to its original class name if unexpand_detections is True.
+        """
+        if not self.unexpand_detections or not self._reverse_expansion_map:
+            return detected_name
+        return self._reverse_expansion_map.get(detected_name.lower(), detected_name)
 
     def _initialize_client(self):
         """
@@ -89,7 +138,7 @@ class GoogleCVInferencer:
             
             # Process localization_result to fit the expected output structure
             # The 'objects' list from localize_objects is already good.
-            # We need to derive 'tags' and 'confidence' based on class_names and detected objects.
+            # We need to derive 'tags' and 'confidence' based on self.expanded_class_names and detected objects.
 
             detected_objects = localization_result.get("objects", [])
             relevant_tags = []
@@ -101,26 +150,25 @@ class GoogleCVInferencer:
                     obj_confidence = obj.get("confidence", 0.0)
 
                     if obj_confidence >= self.confidence_threshold:
-                        is_relevant_to_class_names = False
-                        tag_to_add = obj_name # Default tag is the detected object name
+                        is_relevant_to_expanded_class_names = False
+                        tag_to_add = obj_name 
 
-                        if not self.class_names: # If no class_names, any confident object is relevant
-                            is_relevant_to_class_names = True
+                        if not self.expanded_class_names: 
+                            is_relevant_to_expanded_class_names = True
                         else:
-                            for target_class in self.class_names:
-                                if target_class.lower() in obj_name:
-                                    is_relevant_to_class_names = True
-                                    tag_to_add = target_class.lower() # Use the matched class_name for the tag
+                            for target_class in self.expanded_class_names: # Match against expanded names
+                                if target_class.lower() in obj_name: # Google's names can be multi-word
+                                    is_relevant_to_expanded_class_names = True
+                                    tag_to_add = target_class.lower() 
                                     break
                         
-                        if is_relevant_to_class_names:
+                        if is_relevant_to_expanded_class_names:
                             relevant_tags.append(tag_to_add)
                             if obj_confidence > highest_confidence_for_relevant_tags:
                                 highest_confidence_for_relevant_tags = obj_confidence
             
             if not relevant_tags and detected_objects:
-                 # Fallback if no class_names matched but objects were found
-                if not self.class_names: # If class_names is empty, all confident objects are "relevant"
+                if not self.expanded_class_names: 
                     for obj in detected_objects:
                         if obj["confidence"] >= self.confidence_threshold:
                             relevant_tags.append(obj["name"].lower())
@@ -169,6 +217,7 @@ class GoogleCVInferencer:
             localization_result = self.localize_objects(image_content=content)
             
             # Process localization_result similar to process_image
+            # Uses self.expanded_class_names for matching
             detected_objects = localization_result.get("objects", [])
             relevant_tags = []
             highest_confidence_for_relevant_tags = 0.0
@@ -179,25 +228,25 @@ class GoogleCVInferencer:
                     obj_confidence = obj.get("confidence", 0.0)
 
                     if obj_confidence >= self.confidence_threshold:
-                        is_relevant_to_class_names = False
+                        is_relevant_to_expanded_class_names = False
                         tag_to_add = obj_name 
 
-                        if not self.class_names: 
-                            is_relevant_to_class_names = True
+                        if not self.expanded_class_names: 
+                            is_relevant_to_expanded_class_names = True
                         else:
-                            for target_class in self.class_names:
+                            for target_class in self.expanded_class_names: # Match against expanded
                                 if target_class.lower() in obj_name:
-                                    is_relevant_to_class_names = True
+                                    is_relevant_to_expanded_class_names = True
                                     tag_to_add = target_class.lower()
                                     break
                         
-                        if is_relevant_to_class_names:
+                        if is_relevant_to_expanded_class_names:
                             relevant_tags.append(tag_to_add)
                             if obj_confidence > highest_confidence_for_relevant_tags:
                                 highest_confidence_for_relevant_tags = obj_confidence
             
             if not relevant_tags and detected_objects:
-                if not self.class_names:
+                if not self.expanded_class_names:
                     for obj in detected_objects:
                         if obj["confidence"] >= self.confidence_threshold:
                             relevant_tags.append(obj["name"].lower())
@@ -261,19 +310,24 @@ class GoogleCVInferencer:
                 print(f"Debug: Skipping object {obj_name_detected} due to low confidence: {obj_confidence} < {self.confidence_threshold}")
                 continue
 
+            # Determine if the object matches one of the target expanded_class_names (if any are specified)
+            # And determine the folder name for saving
             qualifies_for_saving = False
-            save_category_name = obj_name_detected 
+            detected_category_name_for_file = obj_name_detected 
 
-            if not self.class_names: 
+            if not self.expanded_class_names: 
                 qualifies_for_saving = True
             else:
-                for target_class in self.class_names:
+                for target_class in self.expanded_class_names: # Check against expanded list
                     if target_class.lower() in obj_name_detected:
                         qualifies_for_saving = True
-                        save_category_name = target_class.lower() 
+                        detected_category_name_for_file = target_class.lower()
                         break
             
             if qualifies_for_saving:
+                # Unexpand the category name for the directory if the feature is enabled
+                save_category_name = self._unexpand_detection_name(detected_category_name_for_file)
+
                 # Convert normalized vertices to pixel coordinates for cropping
                 # Assuming a rectangular bounding box from the normalized vertices
                 # x_coords = [v[0] for v in normalized_vertices]

@@ -154,6 +154,15 @@ def main(args):
     logger.info(f"Detections save directory set to: {DETECTIONS_SAVE_DIR}")
     logger.info(f"Capture interval set to: {CAPTURE_EVERY} seconds")
 
+    # Get unexpand_detections setting
+    unexpand_detections_config = config_manager.get_unexpand_detections()
+    # Command-line arg overrides config if explicitly set (i.e., not None)
+    if args.unexpand_detections is not None:
+        unexpand_detections = args.unexpand_detections
+    else:
+        unexpand_detections = unexpand_detections_config
+    logger.info(f"Unexpand detections set to: {unexpand_detections}")
+
     # Get AutoKeras specific settings for later use
     try:
         original_class_names = config_manager.get_class_names() 
@@ -170,23 +179,24 @@ def main(args):
         return
 
     # --- Quick and dirty class name expansion --- Start
+    # This logic will be moved to individual CV processors
     # expansion_map is now loaded from config
-    expanded_class_names = []
-    if original_class_names: # Ensure original_class_names is not None and is iterable
-        for name in original_class_names:
-            if isinstance(name, str):
-                # Get the list of expanded names, defaulting to the original name if not in map
-                # Ensure all names are lowercased for consistent matching
-                terms_to_add = [term.lower() for term in expansion_map.get(name.lower(), [name])]
-                expanded_class_names.extend(terms_to_add)
-            else:
-                logger.warning(f"Encountered non-string class name '{name}' in config, skipping expansion for it.")
-                expanded_class_names.append(str(name).lower()) # Add as string, lowercased
+    # expanded_class_names = []
+    # if original_class_names: # Ensure original_class_names is not None and is iterable
+    #     for name in original_class_names:
+    #         if isinstance(name, str):
+    #             # Get the list of expanded names, defaulting to the original name if not in map
+    #             # Ensure all names are lowercased for consistent matching
+    #             terms_to_add = [term.lower() for term in expansion_map.get(name.lower(), [name])]
+    #             expanded_class_names.extend(terms_to_add)
+    #         else:
+    #             logger.warning(f"Encountered non-string class name '{name}' in config, skipping expansion for it.")
+    #             expanded_class_names.append(str(name).lower()) # Add as string, lowercased
 
-    # Remove duplicates and sort for consistency (optional, but good for logging)
-    if expanded_class_names:
-        expanded_class_names = sorted(list(set(expanded_class_names)))
-    logger.info(f"Expanded class names for CV processing: {expanded_class_names}")
+    # # Remove duplicates and sort for consistency (optional, but good for logging)
+    # if expanded_class_names:
+    #     expanded_class_names = sorted(list(set(expanded_class_names)))
+    # logger.info(f"Expanded class names for CV processing: {expanded_class_names}") # This will be logged by processors
     # --- Quick and dirty class name expansion --- End
     
     autokeras_model_dir = config_manager.get_autokeras_model_dir()
@@ -253,7 +263,9 @@ def main(args):
             # Pass the retrain_cv flag and config values to the AutoKeras processor
             cv_processor_instance = AutoKerasCVProcessor(
                 retrain_model=args.retrain_cv,
-                class_names=expanded_class_names, # Use expanded_class_names
+                class_names=original_class_names, # Pass original class_names
+                expansion_map=expansion_map, # Pass expansion_map
+                unexpand_detections=unexpand_detections, # Pass unexpand_detections
                 model_dir=autokeras_model_dir,
                 model_filename=autokeras_model_filename,
                 image_data_dir=autokeras_image_data_dir, # Pass image_data_dir
@@ -265,7 +277,13 @@ def main(args):
             # Determine credentials path: command line > config file > hardcoded default (now from config)
             credentials_path = args.credentials_path if args.credentials_path is not None else default_credentials_path
             logger.info(f"Using Google CV credentials from: {credentials_path}")
-            cv_processor_instance = GoogleCVProcessor(credentials_path=credentials_path, confidence_threshold=confidence_threshold) # Pass confidence_threshold
+            cv_processor_instance = GoogleCVProcessor(
+                credentials_path=credentials_path, 
+                confidence_threshold=confidence_threshold,
+                class_names=original_class_names, # Pass original class_names
+                expansion_map=expansion_map, # Pass expansion_map
+                unexpand_detections=unexpand_detections # Pass unexpand_detections
+                ) 
             if not cv_processor_instance.api_ready_for_inference: # Check the correct attribute
                 logger.warning(f"Google Cloud Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
         elif args.cv_backend == "azure": # Add this block
@@ -274,7 +292,9 @@ def main(args):
             cv_processor_instance = AzureCVInferencer(
                 credentials_path=credentials_path, 
                 confidence_threshold=confidence_threshold,
-                class_names_override=expanded_class_names # Pass expanded list
+                class_names_override=original_class_names, # Pass original class_names (renaming for clarity later)
+                expansion_map=expansion_map, # Pass expansion_map
+                unexpand_detections=unexpand_detections # Pass unexpand_detections
             )
             if not cv_processor_instance.api_ready:
                 logger.warning(f"Azure Computer Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
@@ -339,9 +359,11 @@ if __name__ == "__main__":
     parser.add_argument("--retrain-cv", action="store_true",
                         help="Retrain the CV model. If not set, uses an existing model or errors if none exists.")
     parser.add_argument("--cv-backend", type=str, default="local", choices=["local", "google", "azure"],
-                        help="Specify the computer vision backend to use: \'local\' for AutoKeras, \'google\' for Google Cloud Vision API, or \'azure\' for Microsoft Azure Vision API.")
+                        help="Specify the computer vision backend to use: 'local' for AutoKeras, 'google' for Google Cloud Vision API, or 'azure' for Microsoft Azure Vision API.")
     parser.add_argument("--credentials-path", type=str, default=None, 
                         help="Path to Cloud service account JSON file (e.g., Google Cloud, Azure). Overrides path in config file. If not provided, uses path from config or a default (e.g., service_account.json for Google, azure_cv_credentials.json for Azure).")
+    parser.add_argument("--unexpand-detections", type=lambda x: (str(x).lower() == 'true'), default=None,
+                        help="Enable/disable unexpanding of detected classes back to their original class from the expansion map (e.g., 'van' back to 'car'). Overrides config.json. (true/false)")
     
     # Potentially add other arguments here later, e.g., for YOUTUBE_URL, SAVE_DIR, etc.
     
