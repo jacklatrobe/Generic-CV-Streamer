@@ -11,20 +11,25 @@ import hashlib  # Added for hashing frames
 
 class FrameExtractor:
     """Extracts and saves frames from a video stream at specified intervals."""
-    def __init__(self, save_dir: str = "boat_ramp_frames", capture_every_sec: float = 2.0, cv_processor=None):
+    def __init__(self, save_dir: str = "boat_ramp_frames", capture_every_sec: float = 2.0, cv_processor=None, detections_save_dir: str = "detections"):
         """Initializes the FrameExtractor.
 
         Args:
-            save_dir: Directory to save the extracted frames.
+            save_dir: Directory to save the extracted raw frames.
             capture_every_sec: Interval in seconds at which to capture frames.
-            cv_processor: An optional instance of a CV processor class (e.g., LocalCVProcessor).
-                          If provided, its `process_image` method will be called after saving a frame.
+            cv_processor: An optional instance of a CV processor class.
+            detections_save_dir: Directory to save processed detections (e.g., cropped objects).
         """
         self.save_dir = save_dir
         self.capture_every_sec = capture_every_sec
-        self.cv_processor = cv_processor  # Store the CV processor instance
-        self.last_saved_frame_hash = None  # Initialize hash for comparison
+        self.cv_processor = cv_processor
+        self.detections_save_dir = detections_save_dir # Store detections save directory
+        self.last_saved_frame_hash = None
         os.makedirs(self.save_dir, exist_ok=True)
+        # Ensure the base detections directory exists if a cv_processor is provided
+        # The CV processor itself will handle its specific subdirectories.
+        if self.cv_processor and self.detections_save_dir:
+            os.makedirs(self.detections_save_dir, exist_ok=True)
 
     def _calculate_frame_hash(self, frame) -> str:
         """Calculates a SHA256 hash for a given frame."""
@@ -142,33 +147,53 @@ class FrameExtractor:
 
                         if is_ready:
                             try:
-                                print(f"  Processing with {backend_name}: {file_path}")
-                                cv_results = self.cv_processor.process_image(file_path)
+                                # print(f"  Processing with {backend_name}: {file_path}") # Already logged by CV module usually
+                                # Pass the original frame (image_np) to process_frame for CV modules that need it for cropping
+                                cv_results = self.cv_processor.process_frame(frame) # Pass frame for potential cropping
                                 
+                                # Check if the cv_processor has a save_processed_frame method
+                                if hasattr(self.cv_processor, 'save_processed_frame') and callable(getattr(self.cv_processor, 'save_processed_frame')):
+                                    # AutoKeras saves the whole frame, others save cropped objects from the 'objects' list
+                                    if backend_name == "Local (AutoKeras)":
+                                        # AutoKeras save_processed_frame expects the result dict and frame_data
+                                        if cv_results and cv_results.get("tags") and cv_results["tags"][0] not in ["no_confident_match", "error_model_not_ready", "error_processing_frame"] and cv_results.get("confidence", 0.0) >= self.cv_processor.confidence_threshold:
+                                            self.cv_processor.save_processed_frame(frame, cv_results, frame_path=file_path)
+                                    elif cv_results and cv_results.get("objects"):
+                                        # For object detectors (Azure, Google), pass the frame and the list of objects
+                                        # The save_processed_frame method in these inferencers will handle cropping and saving
+                                        self.cv_processor.save_processed_frame(frame, cv_results.get("objects"))
+                                
+                                # Logging results based on the structure of cv_results
+                                # This part is for console logging of the main tags/confidence summary
                                 confidence_threshold_to_use = 0.7 # Default
-                                if hasattr(self.cv_processor, 'inferencer') and self.cv_processor.inferencer and \
-                                   hasattr(self.cv_processor.inferencer, 'confidence_threshold'):
+                                if hasattr(self.cv_processor, 'confidence_threshold'): # General case for inferencers
+                                    confidence_threshold_to_use = self.cv_processor.confidence_threshold
+                                elif hasattr(self.cv_processor, 'inferencer') and self.cv_processor.inferencer and \
+                                   hasattr(self.cv_processor.inferencer, 'confidence_threshold'): # For AutoKerasCVProcessor
                                     confidence_threshold_to_use = self.cv_processor.inferencer.confidence_threshold
                                 
                                 if cv_results and cv_results.get("tags") and cv_results["tags"]:
                                     first_tag = cv_results["tags"][0]
-                                    negative_tags = ["no_confident_match", "no_confident_match_google", "no_labels_from_google"]
+                                    # Consolidate negative/error tags if possible, or ensure they are consistently named
+                                    negative_tags = ["no_confident_match", "no_confident_match_google", "no_labels_from_google", "no_confident_match_azure", "no_labels_from_azure"]
                                     is_error_tag = first_tag.startswith("error_")
 
                                     if not is_error_tag and first_tag not in negative_tags and \
                                        cv_results.get("confidence", 0.0) >= confidence_threshold_to_use:
-                                        print(f"  {backend_name} Results: {cv_results}")
+                                        print(f"  {backend_name} Results: Tags: {cv_results['tags']}, Confidence: {cv_results['confidence']:.4f}")
+                                        # Detailed objects are saved by save_processed_frame, log count here if useful
+                                        if cv_results.get("objects") is not None:
+                                            print(f"  {backend_name}: Found {len(cv_results.get('objects'))} objects. Confident detections are saved.")
                                     else:
-                                        # For no_confident_match_google, confidence might be for the top non-target label
                                         actual_confidence = cv_results.get('confidence', 0.0)
-                                        if first_tag in negative_tags and first_tag != "no_labels_from_google": # it has some confidence score
-                                            print(f"  {backend_name}: No target class met threshold (tag: {first_tag}, confidence: {actual_confidence:.4f})")
-                                        elif is_error_tag or first_tag == "no_labels_from_google":
-                                            print(f"  {backend_name}: Error or no labels (tag: {first_tag}, confidence: {actual_confidence:.4f})")
+                                        if first_tag in negative_tags:
+                                            print(f"  {backend_name}: No target class met threshold (Tag: {first_tag}, Confidence: {actual_confidence:.4f})")
+                                        elif is_error_tag:
+                                            print(f"  {backend_name}: Error processing (Tag: {first_tag}, Confidence: {actual_confidence:.4f})")
                                         else: # Low confidence for a target class
-                                            print(f"  {backend_name}: Low confidence for match (tag: {first_tag}, confidence: {actual_confidence:.4f})")
+                                            print(f"  {backend_name}: Low confidence for match (Tag: {first_tag}, Confidence: {actual_confidence:.4f})")
                                 else:
-                                    print(f"  {backend_name} processing returned unexpected result format: {cv_results}")
+                                    print(f"  {backend_name} processing returned no tags or unexpected result format: {cv_results}")
                                     
                             except Exception as e:
                                 print(f"  Error during {backend_name} processing for {file_path}: {e}")

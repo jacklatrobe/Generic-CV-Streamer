@@ -45,7 +45,55 @@ class AzureSdkInfoFilter(logging.Filter):
         return not (record.name == "azure.core.pipeline.policies.http_logging_policy" and record.levelno < logging.WARNING)
 
 console_handler.addFilter(AzureSdkInfoFilter())
-console_handler.setLevel(logging.INFO) # Console handler itself processes INFO and above, filter does the specific suppression
+
+# NEW: Filter for console handler to make network/OpenCV Python exceptions friendlier
+class ConsoleFriendlyErrorFilter(logging.Filter):
+    def filter(self, record):
+        if record.levelno >= logging.ERROR:
+            # Scenario 1: Specifically for logger.exception("An unexpected error occurred...")
+            if "An unexpected error occurred" in record.msg and record.exc_info:
+                 record.msg = "An unexpected critical error occurred. Please check the log file for details and stack trace."
+                 record.exc_info = None
+                 record.exc_text = None
+                 record.args = () # msg is now a literal string
+                 return True # Indicates this record was handled regarding console output modification
+
+            # Scenario 2: For RuntimeErrors or cv2.errors related to stream/network/OpenCV issues
+            if record.exc_info:
+                exc_type, exc_value, _ = record.exc_info
+                error_message_str = str(exc_value).lower() # For case-insensitive keyword matching
+
+                is_targeted_for_friendly_console_msg = False
+                # Check for RuntimeErrors with specific keywords
+                if isinstance(exc_value, RuntimeError):
+                    stream_error_keywords = [
+                        "could not open stream",
+                        "failed to obtain a valid stream url",
+                        "stream timeout", # General for timeout messages
+                        "unable to read from socket",
+                        "failed to send close message",
+                        "error when loading first segment", # For HLS/stream parsing errors
+                    ]
+                    if any(keyword in error_message_str for keyword in stream_error_keywords):
+                        is_targeted_for_friendly_console_msg = True
+                
+                # Check if it's a cv2.error (Python exception from OpenCV)
+                # These are often verbose and can be simplified on the console.
+                # Ensure cv2 module name is in the type's module path.
+                if exc_type.__name__ == 'error' and hasattr(exc_type, '__module__') and 'cv2' in exc_type.__module__:
+                    is_targeted_for_friendly_console_msg = True
+
+                if is_targeted_for_friendly_console_msg:
+                    record.msg = "A network or video processing error occurred. Please check the log file for details."
+                    record.exc_info = None # Suppress stack trace on console
+                    record.exc_text = None # Suppress formatted exception text on console
+                    record.args = () # msg is now a literal string, so no args needed
+                    return True # Indicates this record was handled
+
+        return True # Allow all other records to pass through to the console normally
+
+console_handler.addFilter(ConsoleFriendlyErrorFilter())
+console_handler.setLevel(logging.INFO) # Console handler itself processes INFO and above, filters do the specific suppression
 root_logger.addHandler(console_handler)
 
 # Set Azure SDK logger level to INFO to ensure its messages *can* reach handlers,
@@ -92,10 +140,12 @@ def main(args):
         return
 
     # Get settings from ConfigManager
-    SAVE_DIR = config_manager.get_save_dir()
+    RAW_SAVE_DIR = config_manager.get_raw_save_dir() # Updated from get_save_dir()
+    DETECTIONS_SAVE_DIR = config_manager.get_detections_save_dir() # Get the new setting
     CAPTURE_EVERY = config_manager.get_capture_every_sec()
     default_credentials_path = config_manager.get_credentials_path(default="service_account.json")
-    logger.info(f"Save directory set to: {SAVE_DIR}")
+    logger.info(f"Raw frames save directory set to: {RAW_SAVE_DIR}")
+    logger.info(f"Detections save directory set to: {DETECTIONS_SAVE_DIR}")
     logger.info(f"Capture interval set to: {CAPTURE_EVERY} seconds")
 
     # Get AutoKeras specific settings for later use
@@ -120,6 +170,21 @@ def main(args):
     # Import heavy modules here (lazy loading)
     import tensorflow as tf
     tf.get_logger().setLevel('ERROR') # Suppress TensorFlow Python-level warnings
+
+    # Attempt to suppress OpenCV native warnings (e.g., [ WARN:0@...])
+    try:
+        import cv2 # Import cv2 earlier specifically for log level setting
+        if hasattr(cv2, 'utils') and hasattr(cv2.utils, 'logging'):
+            # cv2.utils.logging.LOG_LEVEL_SILENT or cv2.utils.logging.LOG_LEVEL_ERROR
+            cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR) 
+            logger.info("Attempted to set OpenCV native log level to ERROR to reduce console noise.")
+        else:
+            logger.info("cv2.utils.logging not available with this OpenCV version. Native OpenCV warnings might still appear on console.")
+    except ImportError:
+        # This might happen if cv2 is not installed, though it's a dependency for FrameExtractor
+        logger.warning("OpenCV (cv2) could not be imported directly in main.py for log level setting. FrameExtractor will handle its import.")
+    except Exception as e_cv_log:
+        logger.warning(f"Could not set OpenCV native log level in main.py: {e_cv_log}")
 
     from downloading.downloader import YouTubeDownloader # Keep for YouTube
     from downloading.earthcam_downloader import EarthCamDownloader # Add for EarthCam
@@ -182,9 +247,10 @@ def main(args):
     # Pass configuration to FrameExtractor. SAVE_DIR and CAPTURE_EVERY are used here.
     # Also pass the cv_processor_instance (it will be None if --no-cv is used)
     frame_extractor = FrameExtractor(
-        save_dir=SAVE_DIR, 
+        save_dir=RAW_SAVE_DIR,  # Updated to RAW_SAVE_DIR
         capture_every_sec=CAPTURE_EVERY,
-        cv_processor=cv_processor_instance # Pass the CV processor here
+        cv_processor=cv_processor_instance, # Pass the CV processor here
+        detections_save_dir=DETECTIONS_SAVE_DIR # Pass the detections save directory
     )
     
     logger.info(f"Attempting to capture frames from: {source_url}")

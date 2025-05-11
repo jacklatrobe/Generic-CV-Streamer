@@ -1,4 +1,4 @@
-# filepath: c:\Users\jlatrobe\BoatRampTagger\computer_vision\google_cv_inferencer.py
+# filepath: c:\\Users\\jlatrobe\\BoatRampTagger\\computer_vision\\google_cv_inferencer.py
 """
 Handles inference using Google Cloud Vision API.
 """
@@ -10,6 +10,7 @@ from datetime import datetime
 from google.cloud import vision
 import numpy as np
 import cv2
+import uuid # Added for unique filenames
 
 class GoogleCVInferencer:
     """
@@ -27,36 +28,48 @@ class GoogleCVInferencer:
         self.client = None
         self.model_loaded = False
         self.confidence_threshold = 0.7  # 70% confidence threshold
+        self.detections_save_dir = "detections" # Default save directory
+        self.use_object_localization = True # Assuming this should be True by default to get bounding boxes
 
         self._load_config() # Load class_names from config
         self._initialize_client()
 
     def _load_config(self):
         """
-        Loads class_names from config.json located at the project root.
+        Loads class_names, confidence_threshold, and detections_save_dir from config.json.
         """
         # Assuming the script is in BoatRampTagger/computer_vision/
         # Project root is two levels up from this file's directory.
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..")) # Corrected path
         config_path = os.path.join(project_root, "config.json")
         
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
                 self.class_names = config.get("class_names", [])
+                # Allow for a specific confidence threshold for Google CV in config
+                self.confidence_threshold = float(config.get("google_confidence_threshold", self.confidence_threshold))
+                self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir)
+                
                 if not self.class_names:
-                    print(f"Warning: 'class_names' not found or empty in {config_path}. Detections might not be categorized correctly.")
+                    print(f"Warning: 'class_names' not found or empty in {config_path}. Detections will be saved under their detected names.")
                 else:
                     print(f"Loaded class_names: {self.class_names} from {config_path}")
+                print(f"Google CV confidence threshold set to: {self.confidence_threshold}")
+                print(f"Google CV detections will be saved to: {self.detections_save_dir}")
+
         except FileNotFoundError:
-            print(f"Error: {config_path} not found. Please create it with 'class_names' list.")
-            self.class_names = [] # Default to empty list if config not found
+            print(f"Error: {config_path} not found. Using default settings.")
+            self.class_names = [] 
         except json.JSONDecodeError:
-            print(f"Error: Could not decode {config_path}. Please ensure it is valid JSON.")
-            self.class_names = [] # Default to empty list if JSON is invalid
-        except Exception as e:
-            print(f"An unexpected error occurred while loading config: {e}")
+            print(f"Error: Could not decode {config_path}. Using default settings.")
             self.class_names = []
+        except ValueError:
+            print(f"Error: Invalid 'google_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
+        except Exception as e:
+            print(f"An unexpected error occurred while loading config: {e}. Using default settings.")
+            self.class_names = []
+        self.class_names = [name.lower() for name in self.class_names]  # Normalize class names to lowercase
 
     def _initialize_client(self):
         """
@@ -79,244 +92,273 @@ class GoogleCVInferencer:
 
     def process_image(self, image_path: str):
         """
-        Processes an image from a file path using Google Cloud Vision API.
+        Processes an image from a file path using Google Cloud Vision API for object localization.
 
         Args:
             image_path (str): Path to the image file.
 
         Returns:
-            dict: A dictionary containing the predicted 'tags' (list of relevant class names)
-                  and 'confidence' (highest confidence among relevant tags).
-                  Returns an error tag if processing fails.
+            dict: A dictionary containing 'tags' (list of relevant class names based on detected objects),
+                  'confidence' (highest confidence among relevant tags),
+                  and 'objects' (list of all detected objects with details: name, confidence, bounding_box).
+                  Returns an error structure if processing fails.
         """
         if not self.api_ready or not self.client:
             print("Google CV API not available for processing.")
-            return {"tags": ["error_api_not_ready"], "confidence": 0.0}
+            return {"tags": ["error_api_not_ready"], "confidence": 0.0, "objects": []}
         if not os.path.exists(image_path):
             print(f"Image path does not exist: {image_path}")
-            return {"tags": ["error_image_not_found"], "confidence": 0.0}
+            return {"tags": ["error_image_not_found"], "confidence": 0.0, "objects": []}
 
         try:
-            # If object localization is enabled, use it instead of label detection
-            if self.use_object_localization:
-                print(f"Using object localization for {image_path}")
-                localization_result = self.localize_objects(image_path=image_path)
-                
-                if "error" in localization_result and localization_result["error"] and localization_result["error"] != "No target classes detected":
-                    print(f"Error in object localization: {localization_result['error']}")
-                    return {"tags": ["error_object_localization"], "confidence": 0.0}
-                
-                # Convert localization results to our standard format
-                detected_tags = localization_result.get("detected_classes", [])
-                highest_confidence = localization_result.get("highest_confidence", 0.0)
-                best_label_for_saving = localization_result.get("best_object_for_saving")
-                
-                # Draw bounding boxes on a copy of the image if objects were detected
-                objects = localization_result.get("objects", [])
-                if objects and len(objects) > 0:
-                    # Load the original image
-                    img = cv2.imread(image_path)
-                    img_height, img_width = img.shape[:2]
-                    
-                    # Draw bounding boxes for each detected object
-                    for obj in objects:
-                        if obj["confidence"] >= self.confidence_threshold:
-                            # Convert normalized coordinates to pixel coordinates
-                            box = obj["bounding_box"]
-                            x_min = int(box[0][0] * img_width)
-                            y_min = int(box[0][1] * img_height)
-                            x_max = int(box[2][0] * img_width)
-                            y_max = int(box[2][1] * img_height)
-                            
-                            # Choose color based on whether it's a target class
-                            color = (0, 255, 0) if obj["matched_class"] else (0, 0, 255)  # Green for targets, red for others
-                            
-                            # Draw the box
-                            cv2.rectangle(img, (x_min, y_min), (x_max, y_max), color, 2)
-                            
-                            # Add text label
-                            text = f"{obj['name']} ({obj['confidence']:.2f})"
-                            cv2.putText(img, text, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                    
-                    # If we detected any target classes, save the annotated image
-                    if best_label_for_saving in self.class_names:
-                        # Create a new filename for the annotated image
-                        base_name = os.path.basename(image_path)
-                        name, ext = os.path.splitext(base_name)
-                        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
-                        detection_dir = os.path.join(self.detections_base_dir, best_label_for_saving)
-                        annotated_path = os.path.join(detection_dir, f"{name}_annotated_{timestamp}{ext}")
-                        
-                        # Save the annotated image
-                        cv2.imwrite(annotated_path, img)
-                        print(f"Saved annotated image with bounding boxes to {annotated_path}")
-                
-                if not detected_tags:
-                    if objects:
-                        # Find the highest confidence non-target object
-                        top_object = max(objects, key=lambda o: o["confidence"]) if objects else None
-                        if top_object:
-                            print(f"Processed {image_path}: No target class detected. Top object: {top_object['name']} ({top_object['confidence']:.4f})")
-                            return {"tags": ["no_confident_match_google"], "confidence": top_object["confidence"]}
-                    
-                    print(f"Processed {image_path}: No objects detected.")
-                    return {"tags": ["no_labels_from_google"], "confidence": 0.0}
-                
-                print(f"Processed {image_path} with object localization: Detected classes = {detected_tags}, Highest Confidence = {highest_confidence:.4f}")
-                return {
-                    "tags": detected_tags, 
-                    "confidence": highest_confidence,
-                    "objects": objects,
-                    "best_label_for_saving": best_label_for_saving
-                }
-            
-            # If object localization is not enabled, use the original label detection method
             with io.open(image_path, 'rb') as image_file:
                 content = image_file.read()
-            image = vision.Image(content=content)
             
-            response = self.client.label_detection(image=image)
-            labels = response.label_annotations
+            # Re-read image with OpenCV to get dimensions for BBox conversion later if needed by save_processed_frame
+            # Or, ensure localize_objects can pass image dimensions if it reads it.
+            # For now, assuming main.py will pass the frame_data to save_processed_frame.
 
-            if response.error.message:
-                raise Exception(f"Google CV API Error: {response.error.message}")
+            localization_result = self.localize_objects(image_content=content)
+            
+            # Process localization_result to fit the expected output structure
+            # The 'objects' list from localize_objects is already good.
+            # We need to derive 'tags' and 'confidence' based on class_names and detected objects.
 
-            # ...existing label detection code...
+            detected_objects = localization_result.get("objects", [])
+            relevant_tags = []
+            highest_confidence_for_relevant_tags = 0.0
+
+            if detected_objects:
+                for obj in detected_objects:
+                    obj_name = obj.get("name", "unknown").lower()
+                    obj_confidence = obj.get("confidence", 0.0)
+
+                    if obj_confidence >= self.confidence_threshold:
+                        is_relevant_to_class_names = False
+                        tag_to_add = obj_name # Default tag is the detected object name
+
+                        if not self.class_names: # If no class_names, any confident object is relevant
+                            is_relevant_to_class_names = True
+                        else:
+                            for target_class in self.class_names:
+                                if target_class.lower() in obj_name:
+                                    is_relevant_to_class_names = True
+                                    tag_to_add = target_class.lower() # Use the matched class_name for the tag
+                                    break
+                        
+                        if is_relevant_to_class_names:
+                            relevant_tags.append(tag_to_add)
+                            if obj_confidence > highest_confidence_for_relevant_tags:
+                                highest_confidence_for_relevant_tags = obj_confidence
+            
+            if not relevant_tags and detected_objects:
+                 # Fallback if no class_names matched but objects were found
+                if not self.class_names: # If class_names is empty, all confident objects are "relevant"
+                    for obj in detected_objects:
+                        if obj["confidence"] >= self.confidence_threshold:
+                            relevant_tags.append(obj["name"].lower())
+                            if obj["confidence"] > highest_confidence_for_relevant_tags:
+                                highest_confidence_for_relevant_tags = obj["confidence"]
+                
+                if not relevant_tags: # Still no relevant tags for summary
+                    return {"tags": ["no_confident_match_google"], "confidence": 0.0, "objects": detected_objects}
+
+
+            if not relevant_tags:
+                return {"tags": ["no_labels_from_google"], "confidence": 0.0, "objects": detected_objects}
+
+            return {
+                "tags": list(set(relevant_tags)), 
+                "confidence": highest_confidence_for_relevant_tags,
+                "objects": detected_objects 
+            }
 
         except Exception as e:
             print(f"Error processing image {image_path} with Google CV: {e}")
-            return {"tags": ["error_processing_google_cv"], "confidence": 0.0}
+            return {"tags": ["error_processing_google_cv"], "confidence": 0.0, "objects": []}
 
     def process_frame(self, frame_data: np.ndarray):
         """
-        Processes a raw image frame using Google Cloud Vision API.
+        Processes a raw image frame using Google Cloud Vision API for object localization.
 
         Args:
             frame_data (np.ndarray): The raw image data as a NumPy array (BGR format from OpenCV).
 
         Returns:
-            dict: A dictionary containing predicted 'tags' and 'confidence'.
+            dict: A dictionary containing 'tags', 'confidence', and 'objects'.
         """
         if not self.api_ready or not self.client:
             print("Google CV API not available for processing.")
-            return {"tags": ["error_api_not_ready"], "confidence": 0.0}
+            return {"tags": ["error_api_not_ready"], "confidence": 0.0, "objects": []}
 
         try:
-            # If object localization is enabled, use it instead of label detection
-            if self.use_object_localization:
-                print("Using object localization for frame")
-                localization_result = self.localize_objects(frame_data=frame_data)
-                
-                if "error" in localization_result and localization_result["error"] and localization_result["error"] != "No target classes detected":
-                    print(f"Error in object localization: {localization_result['error']}")
-                    return {"tags": ["error_object_localization"], "confidence": 0.0}
-                
-                # Convert localization results to our standard format
-                detected_tags = localization_result.get("detected_classes", [])
-                highest_confidence = localization_result.get("highest_confidence", 0.0)
-                best_label_for_saving = localization_result.get("best_object_for_saving")
-                objects = localization_result.get("objects", [])
-                
-                # Draw bounding boxes on a copy of the frame if objects were detected
-                annotated_frame = None
-                if objects and len(objects) > 0:
-                    # Make a copy of the frame
-                    annotated_frame = frame_data.copy()
-                    img_height, img_width = annotated_frame.shape[:2]
-                    
-                    # Draw bounding boxes for each detected object
-                    for obj in objects:
-                        if obj["confidence"] >= self.confidence_threshold:
-                            # Convert normalized coordinates to pixel coordinates
-                            box = obj["bounding_box"]
-                            x_min = int(box[0][0] * img_width)
-                            y_min = int(box[0][1] * img_height)
-                            x_max = int(box[2][0] * img_width)
-                            y_max = int(box[2][1] * img_height)
-                            
-                            # Choose color based on whether it's a target class
-                            color = (0, 255, 0) if obj["matched_class"] else (0, 0, 255)  # Green for targets, red for others
-                            
-                            # Draw the box
-                            cv2.rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), color, 2)
-                            
-                            # Add text label
-                            text = f"{obj['name']} ({obj['confidence']:.2f})"
-                            cv2.putText(annotated_frame, text, (x_min, y_min - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                
-                if not detected_tags:
-                    if objects:
-                        # Find the highest confidence non-target object
-                        top_object = max(objects, key=lambda o: o["confidence"]) if objects else None
-                        if top_object:
-                            print(f"Processed frame: No target class detected. Top object: {top_object['name']} ({top_object['confidence']:.4f})")
-                            return {"tags": ["no_confident_match_google"], "confidence": top_object["confidence"]}
-                    
-                    print("Processed frame: No objects detected.")
-                    return {"tags": ["no_labels_from_google"], "confidence": 0.0}
-                
-                print(f"Processed frame with object localization: Detected classes = {detected_tags}, Highest Confidence = {highest_confidence:.4f}")
-                return {
-                    "tags": detected_tags, 
-                    "confidence": highest_confidence,
-                    "objects": objects,
-                    "best_label_for_saving": best_label_for_saving,
-                    "annotated_frame": annotated_frame  # Include the annotated frame for saving
-                }
-            
-            # If object localization is not enabled, fall back to the original label detection method
+            # Encode frame to pass to localize_objects
             rgb_frame = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
             is_success, buffer = cv2.imencode(".jpg", rgb_frame)
             if not is_success:
                 raise ValueError("Failed to encode frame to JPEG")
             content = buffer.tobytes()
 
-            image = vision.Image(content=content)
-            response = self.client.label_detection(image=image)
-            labels = response.label_annotations
+            localization_result = self.localize_objects(image_content=content)
+            
+            # Process localization_result similar to process_image
+            detected_objects = localization_result.get("objects", [])
+            relevant_tags = []
+            highest_confidence_for_relevant_tags = 0.0
 
-            if response.error.message:
-                raise Exception(f"Google CV API Error: {response.error.message}")
+            if detected_objects:
+                for obj in detected_objects:
+                    obj_name = obj.get("name", "unknown").lower()
+                    obj_confidence = obj.get("confidence", 0.0)
 
-            # ...existing code...
+                    if obj_confidence >= self.confidence_threshold:
+                        is_relevant_to_class_names = False
+                        tag_to_add = obj_name 
+
+                        if not self.class_names: 
+                            is_relevant_to_class_names = True
+                        else:
+                            for target_class in self.class_names:
+                                if target_class.lower() in obj_name:
+                                    is_relevant_to_class_names = True
+                                    tag_to_add = target_class.lower()
+                                    break
+                        
+                        if is_relevant_to_class_names:
+                            relevant_tags.append(tag_to_add)
+                            if obj_confidence > highest_confidence_for_relevant_tags:
+                                highest_confidence_for_relevant_tags = obj_confidence
+            
+            if not relevant_tags and detected_objects:
+                if not self.class_names:
+                    for obj in detected_objects:
+                        if obj["confidence"] >= self.confidence_threshold:
+                            relevant_tags.append(obj["name"].lower())
+                            if obj["confidence"] > highest_confidence_for_relevant_tags:
+                                highest_confidence_for_relevant_tags = obj["confidence"]
+                if not relevant_tags:
+                    return {"tags": ["no_confident_match_google"], "confidence": 0.0, "objects": detected_objects}
+
+            if not relevant_tags:
+                return {"tags": ["no_labels_from_google"], "confidence": 0.0, "objects": detected_objects}
+
+            return {
+                "tags": list(set(relevant_tags)), 
+                "confidence": highest_confidence_for_relevant_tags,
+                "objects": detected_objects
+            }
 
         except Exception as e:
             print(f"Error processing frame with Google CV: {e}")
-            return {"tags": ["error_processing_google_cv_frame"], "confidence": 0.0}
+            return {"tags": ["error_processing_google_cv_frame"], "confidence": 0.0, "objects": []}
 
-    def save_processed_frame(self, frame_data: np.ndarray, result: dict, frame_path: str = None):
+    def save_processed_frame(self, image_np: np.ndarray, result_objects: list):
         """
-        Saves a processed frame that has been classified with high confidence by Google CV.
-        
+        Saves cropped images of detected objects that meet criteria.
+
         Args:
-            frame_data (np.ndarray): The raw image data as a NumPy array.
-            result (dict): The classification result from process_frame.
-            frame_path (str, optional): Path where the frame might have been saved originally.
-                                      
+            image_np (np.ndarray): The image data as a NumPy array (BGR format from OpenCV).
+            result_objects (list): A list of detected object dictionaries from localize_objects.
+                                   Each dict should have 'name', 'confidence', 'bounding_box' (normalized vertices).
         Returns:
-            str: Path to the saved detection file, or None if save failed or not applicable.
+            list: A list of paths to the saved detection files.
         """
-        if not result or "tags" not in result or not result["tags"]:
-            return None
+        saved_files = []
+        if not self.detections_save_dir:
+            print("Warning: Detections save directory ('detections_save_dir') is not configured for GoogleCV. Cannot save detected objects.")
+            return saved_files
         
-        if result["tags"][0].startswith("error_") or result["tags"][0] in ["no_confident_match_google", "no_labels_from_google"]:
-            # Skip saving any non-target classes
-            return None
+        if not os.path.exists(self.detections_save_dir):
+            try:
+                os.makedirs(self.detections_save_dir, exist_ok=True)
+            except Exception as e:
+                print(f"Error: Could not create base detections directory {self.detections_save_dir}: {e}")
+                return saved_files
 
-        predicted_label_for_saving = result.get("best_label_for_saving")
-        if not predicted_label_for_saving and result["tags"]:
-             if result.get("confidence", 0) < self.confidence_threshold:
-                 return None
-             print("Warning: save_processed_frame called without 'best_label_for_saving' in result. Frame not saved.")
-             return None
+        img_h, img_w = image_np.shape[:2]
 
-        if result.get("confidence", 0) < self.confidence_threshold:
-            return None 
+        for obj in result_objects:
+            obj_name_detected = obj.get("name", "unknown").lower()
+            obj_confidence = obj.get("confidence", 0.0)
+            # Google's bounding_box is object_.bounding_poly.normalized_vertices
+            # It's a list of 4 (x,y) tuples. For a rectangle, typically:
+            # vertices[0] = top-left, vertices[1] = top-right, 
+            # vertices[2] = bottom-right, vertices[3] = bottom-left
+            normalized_vertices = obj.get("bounding_box") 
+
+            if not normalized_vertices or len(normalized_vertices) != 4:
+                print(f"Debug: Skipping object due to missing or invalid bounding box: {obj_name_detected}")
+                continue
+
+            if obj_confidence < self.confidence_threshold:
+                print(f"Debug: Skipping object {obj_name_detected} due to low confidence: {obj_confidence} < {self.confidence_threshold}")
+                continue
+
+            qualifies_for_saving = False
+            save_category_name = obj_name_detected 
+
+            if not self.class_names: 
+                qualifies_for_saving = True
+            else:
+                for target_class in self.class_names:
+                    if target_class.lower() in obj_name_detected:
+                        qualifies_for_saving = True
+                        save_category_name = target_class.lower() 
+                        break
             
-        # Only save if the label is one of our target classes
-        if predicted_label_for_saving in self.class_names:
-            return self._save_detection(None, predicted_label_for_saving, frame_data)
-        return None
+            if qualifies_for_saving:
+                # Convert normalized vertices to pixel coordinates for cropping
+                # Assuming a rectangular bounding box from the normalized vertices
+                # x_coords = [v[0] for v in normalized_vertices]
+                # y_coords = [v[1] for v in normalized_vertices]
+                # x_min_norm, y_min_norm = min(x_coords), min(y_coords)
+                # x_max_norm, y_max_norm = max(x_coords), max(y_coords)
+                
+                # More directly, for a typical response:
+                x_min_norm = normalized_vertices[0][0]
+                y_min_norm = normalized_vertices[0][1]
+                x_max_norm = normalized_vertices[2][0]
+                y_max_norm = normalized_vertices[2][1]
+
+                x1 = int(x_min_norm * img_w)
+                y1 = int(y_min_norm * img_h)
+                x2 = int(x_max_norm * img_w)
+                y2 = int(y_max_norm * img_h)
+                
+                # Ensure coordinates are within image bounds and valid
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(img_w, x2), min(img_h, y2)
+
+                if x2 > x1 and y2 > y1: 
+                    cropped_image = image_np[y1:y2, x1:x2]
+                    
+                    if cropped_image.size == 0:
+                        print(f"Warning: Cropped image for {obj_name_detected} is empty. Original box (norm): {normalized_vertices}, clipped (px): {[x1,y1,x2,y2]}. Skipping save.")
+                        continue
+
+                    category_save_dir = os.path.join(self.detections_save_dir, save_category_name)
+                    try:
+                        os.makedirs(category_save_dir, exist_ok=True)
+                    except Exception as e:
+                        print(f"Error: Could not create category directory {category_save_dir}: {e}")
+                        continue 
+
+                    unique_id = uuid.uuid4()
+                    filename = f"{unique_id}.png" # Save as PNG
+                    save_path = os.path.join(category_save_dir, filename)
+
+                    try:
+                        cv2.imwrite(save_path, cropped_image)
+                        print(f"Info: Saved detected object '{obj_name_detected}' (category: {save_category_name}) to {save_path}")
+                        saved_files.append(save_path)
+                    except Exception as e:
+                        print(f"Error: Failed to save cropped image to {save_path}: {e}")
+                else:
+                    print(f"Warning: Invalid bounding box for {obj_name_detected} after clipping (px): {[x1,y1,x2,y2]} from normalized {normalized_vertices}. Skipping save.")
+            else:
+                print(f"Debug: Object {obj_name_detected} did not qualify for saving based on class_names filter.")
+                
+        return saved_files
 
     def localize_objects(self, image_path=None, image_content=None, frame_data=None):
         """
@@ -357,66 +399,44 @@ class GoogleCVInferencer:
                 return {"objects": [], "error": "No image data provided"}
                 
             # Perform object localization
+            # For object_localization, the bounding box is in object_.bounding_poly.normalized_vertices
             response = self.client.object_localization(image=image)
-            localized_objects = response.localized_object_annotations
+            localized_objects_annotations = response.localized_object_annotations # Renamed for clarity
             
             if response.error.message:
                 raise Exception(f"Google CV API Error: {response.error.message}")
                 
             # Process the results
-            objects_detected = []
-            detected_target_classes = set()
-            highest_confidence = 0.0
-            best_object_for_saving = None
+            objects_detected = [] # This will store our processed list of objects
+            # ... (removed detected_target_classes, highest_confidence, best_object_for_saving as they are re-derived in process_image/frame)
             
-            print(f"Number of objects detected: {len(localized_objects)}")
-            for object_ in localized_objects:
-                object_name = object_.name.lower()
-                confidence = object_.score
+            # print(f"Number of objects detected by API: {len(localized_objects_annotations)}") # Debug
+            for object_annotation in localized_objects_annotations: # Iterate through API response
+                object_name = object_annotation.name # Keep original case for display if needed, but compare lowercase
+                confidence = object_annotation.score
                 
-                # Create the bounding box coordinates
-                vertices = []
-                for vertex in object_.bounding_poly.normalized_vertices:
-                    vertices.append((vertex.x, vertex.y))
+                # Extract normalized vertices for the bounding_box
+                normalized_vertices = []
+                for vertex in object_annotation.bounding_poly.normalized_vertices:
+                    normalized_vertices.append((vertex.x, vertex.y))
                 
-                print(f"  - Object: {object_.name}, Score: {confidence:.4f}, Bounds: {vertices}")
+                # print(f"  - API Object: {object_name}, Score: {confidence:.4f}, Bounds: {normalized_vertices}") # Debug
                 
-                # Check if this object matches our target classes
-                matched_class = None
-                for target_class in self.class_names:
-                    if target_class.lower() in object_name or object_name in target_class.lower():
-                        matched_class = target_class
-                        detected_target_classes.add(target_class)
-                        if confidence > highest_confidence:
-                            highest_confidence = confidence
-                            best_object_for_saving = matched_class
-                        break
-                
-                # Add object to our results
+                # Add object to our results list
                 objects_detected.append({
-                    "name": object_.name,
+                    "name": object_name, # Storing the name as detected
                     "confidence": confidence,
-                    "bounding_box": vertices,
-                    "matched_class": matched_class
+                    "bounding_box": normalized_vertices, # This is a list of (x,y) tuples
+                    # "matched_class": matched_class # This logic is now in process_image/frame
                 })
             
-            # Prepare the result
-            result = {
+            # The result from localize_objects is now just the list of detected objects.
+            # Filtering by class_names and confidence, and determining "best" tags,
+            # will be handled by the calling methods (process_image, process_frame).
+            return {
                 "objects": objects_detected,
-                "detected_classes": list(detected_target_classes),
-                "highest_confidence": highest_confidence,
-                "best_object_for_saving": best_object_for_saving
+                "error": None # Explicitly state no error if successful
             }
-            
-            if not detected_target_classes:
-                if objects_detected:
-                    print(f"No target classes detected among {len(objects_detected)} objects.")
-                else:
-                    print("No objects detected in the image.")
-            else:
-                print(f"Detected target classes: {', '.join(detected_target_classes)} with highest confidence {highest_confidence:.4f}")
-                
-            return result
             
         except Exception as e:
             print(f"Error in object localization: {e}")

@@ -70,9 +70,13 @@ class ConfigManager:
             raise ValueError("'class_names' in configuration must be a list of strings.")
         return names
 
-    def get_save_dir(self, default="boat_ramp_frames"):
-        """Retrieves the 'save_dir' setting."""
-        return self._config_data.get("save_dir", default)
+    def get_raw_save_dir(self, default="raw_frames"):
+        """Retrieves the 'raw_save_dir' setting."""
+        return self._config_data.get("raw_save_dir", default)
+
+    def get_detections_save_dir(self, default="detections"):
+        """Retrieves the 'detections_save_dir' setting."""
+        return self._config_data.get("detections_save_dir", default)
 
     def get_capture_every_sec(self, default=2.0):
         """Retrieves the 'capture_every_sec' setting."""

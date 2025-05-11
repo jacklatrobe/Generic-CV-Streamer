@@ -24,13 +24,14 @@ ENV/
 /raw_frames/
 /autokeras_boat_ramp/
 /*key*.json
+/detections/
 
 # Environment variables
 .env
 
 # Logs
 *.log
-/logs/ # Add this line to ignore the logs directory
+/logs/
 
 # Unit test / coverage reports
 htmlcov/

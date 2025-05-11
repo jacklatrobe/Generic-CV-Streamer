@@ -7,6 +7,7 @@ import json
 import cv2 # For frame processing
 import numpy as np
 import logging # Added
+import uuid # Added for unique filenames
 from azure.ai.vision.imageanalysis import ImageAnalysisClient
 from azure.ai.vision.imageanalysis.models import VisualFeatures
 from azure.core.credentials import AzureKeyCredential
@@ -30,14 +31,14 @@ class AzureCVInferencer:
         self.client = None
         self.api_ready = False
         self.confidence_threshold = 0.7  # Default confidence threshold
+        self.detections_save_dir = "detections" # Default save directory
 
-        self._load_config()  # Load class_names from general config.json
+        self._load_config()  # Load class_names and other settings from general config.json
         self._initialize_client()
 
     def _load_config(self):
         """
-        Loads class_names from config.json located at the project root.
-        Also loads confidence_threshold if specified.
+        Loads class_names, confidence_threshold, and detections_save_dir from config.json.
         """
         # Corrected project_root calculation
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -48,19 +49,21 @@ class AzureCVInferencer:
                 config = json.load(f)
                 self.class_names = config.get("class_names", [])
                 self.confidence_threshold = float(config.get("azure_confidence_threshold", self.confidence_threshold))
+                self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir) # Load detections_save_dir
                 if not self.class_names:
-                    logger.warning(f"'class_names' not found or empty in {config_path}. Detections might not be categorized correctly.")
+                    logger.warning(f"'class_names' not found or empty in {config_path}. Detections might not be categorized correctly for filtering, but will save under detected name.")
                 else:
                     logger.info(f"Loaded class_names: {self.class_names} from {config_path}")
                 logger.info(f"Azure confidence threshold set to: {self.confidence_threshold}")
+                logger.info(f"Detections will be saved to: {self.detections_save_dir}")
         except FileNotFoundError:
-            logger.error(f"Configuration file {config_path} not found. Please create it with 'class_names' list. Using default class_names and threshold.")
+            logger.error(f"Configuration file {config_path} not found. Using defaults.")
         except json.JSONDecodeError:
-            logger.error(f"Could not decode {config_path}. Please ensure it is valid JSON. Using default class_names and threshold.")
+            logger.error(f"Could not decode {config_path}. Using defaults.")
         except ValueError:
             logger.error(f"Invalid 'azure_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
         except Exception as e:
-            logger.exception(f"An unexpected error occurred while loading config: {e}. Using default class_names and threshold.")
+            logger.exception(f"An unexpected error occurred while loading config: {e}. Using defaults.")
 
     def _initialize_client(self):
         """
@@ -160,70 +163,83 @@ class AzureCVInferencer:
         """
         result = self.client.analyze(
             image_data=image_data,
-            visual_features=[VisualFeatures.OBJECTS]
+            visual_features=[VisualFeatures.OBJECTS, VisualFeatures.TAGS] # Added TAGS for broader context if needed, OBJECTS is primary
         )
 
         processed_objects = []
-        relevant_tags = []
+        relevant_tags = [] # Tags based on class_names and confidence
         highest_confidence_for_relevant_tags = 0.0
 
         if result.objects is not None:
             for detected_object in result.objects.list:
                 obj_name = "unknown"
                 obj_confidence = 0.0
-                if detected_object.tags and detected_object.tags[0].name:
-                    obj_name = detected_object.tags[0].name.lower() # Use first tag name as object name
+                # Azure SDK for Image Analysis typically gives object names in detected_object.tags[0].name
+                # and its confidence in detected_object.tags[0].confidence
+                if detected_object.tags and len(detected_object.tags) > 0:
+                    obj_name = detected_object.tags[0].name.lower() 
                     obj_confidence = detected_object.tags[0].confidence
                 
-                # Bounding box: [x, y, w, h] - Corrected attributes
                 bounding_box = [
                     detected_object.bounding_box.x,
                     detected_object.bounding_box.y,
-                    detected_object.bounding_box.width, # Corrected: was .w
-                    detected_object.bounding_box.height # Corrected: was .h
+                    detected_object.bounding_box.width, 
+                    detected_object.bounding_box.height
                 ]
                 
-                processed_objects.append({
+                current_obj_details = {
                     "name": obj_name,
                     "confidence": obj_confidence,
                     "bounding_box": bounding_box 
-                })
+                }
+                processed_objects.append(current_obj_details)
 
                 # Check if this object's name matches any of our target class_names
-                # and if its confidence meets the threshold
+                # and if its confidence meets the threshold for "relevant_tags" summary
                 if obj_confidence >= self.confidence_threshold:
-                    for target_class in self.class_names:
-                        if target_class.lower() in obj_name: # Simple substring match
-                            relevant_tags.append(target_class)
-                            if obj_confidence > highest_confidence_for_relevant_tags:
-                                highest_confidence_for_relevant_tags = obj_confidence
-                            break # Found a match for this object
+                    is_relevant_to_class_names = False
+                    if not self.class_names: # If no class_names, consider any confident object relevant
+                        is_relevant_to_class_names = True
+                    else:
+                        for target_class in self.class_names:
+                            if target_class.lower() in obj_name: 
+                                is_relevant_to_class_names = True
+                                break
+                    
+                    if is_relevant_to_class_names:
+                        # Use target_class for relevant_tags if matched, else obj_name
+                        tag_to_add = obj_name
+                        if self.class_names:
+                            for target_class in self.class_names:
+                                if target_class.lower() in obj_name:
+                                    tag_to_add = target_class.lower()
+                                    break
+                        relevant_tags.append(tag_to_add)
+                        if obj_confidence > highest_confidence_for_relevant_tags:
+                            highest_confidence_for_relevant_tags = obj_confidence
+        
+        # Fallback for tags if no relevant objects found but general tags exist (from VisualFeatures.TAGS)
+        # This part is more about image-level tags, not specific objects for cropping.
+        # For object saving, processed_objects is the key.
+        # The 'tags' in the final result dict is a summary for the image.
 
-        if not relevant_tags and processed_objects: # No relevant tags, but objects were detected
-            # Find the object with the highest confidence among all detected objects
-            # if no specific class_names were matched above threshold
-            # This provides a fallback if no target classes are found but other objects are.
-            # However, the primary goal is to find 'relevant_tags'.
-            # If class_names is empty, all detected objects above threshold could be considered relevant.
-            if not self.class_names: # If no class_names defined, consider all detected objects above threshold
+        if not relevant_tags and processed_objects:
+            # If class_names is empty, all detected objects above threshold could be considered relevant for summary
+            if not self.class_names:
                 for obj in processed_objects:
                     if obj["confidence"] >= self.confidence_threshold:
-                        relevant_tags.append(obj["name"]) # Use object's own name
+                        relevant_tags.append(obj["name"])
                         if obj["confidence"] > highest_confidence_for_relevant_tags:
                              highest_confidence_for_relevant_tags = obj["confidence"]
             
-            if not relevant_tags: # Still no relevant tags
-                 return {"tags": ["no_confident_match_azure"], "confidence": 0.0, "objects": processed_objects}
+            if not relevant_tags: # Still no relevant tags for summary
+                 return {"tags": ["no_confident_match_azure"], "confidence": 0.0, "objects": processed_objects, "image_height": result.metadata.height if result.metadata else None, "image_width": result.metadata.width if result.metadata else None, "model_version": result.model_version}
 
-
-        if not relevant_tags: # No objects detected or none met criteria
-            return {"tags": ["no_labels_from_azure"], "confidence": 0.0, "objects": processed_objects}
-
-        # Deduplicate relevant_tags while preserving order (though order might not be critical here)
-        # For now, simple list is fine, can be refined if multiple objects map to same class_name
+        if not relevant_tags and not processed_objects: # No objects detected or none met criteria
+            return {"tags": ["no_labels_from_azure"], "confidence": 0.0, "objects": processed_objects, "image_height": result.metadata.height if result.metadata else None, "image_width": result.metadata.width if result.metadata else None, "model_version": result.model_version}
         
         return {
-            "tags": list(set(relevant_tags)), # Unique tags
+            "tags": list(set(relevant_tags)), 
             "confidence": highest_confidence_for_relevant_tags,
             "objects": processed_objects,
             "image_height": result.metadata.height if result.metadata else None,
@@ -231,27 +247,93 @@ class AzureCVInferencer:
             "model_version": result.model_version
         }
 
-    # Placeholder for save_processed_frame, similar to GoogleCVInferencer
-    # This would typically be called by the main processing loop if a frame/image
-    # is classified with high confidence for a target class.
-    # For now, it's not implemented as its logic depends on how detections are saved.
-    def save_processed_frame(self, frame_data: np.ndarray, result: dict, frame_path: str = None):
+    def save_processed_frame(self, image_np: np.ndarray, result_objects: list):
         """
-        Saves a processed frame if it meets criteria (e.g., high confidence detection of a target class).
-        This is a placeholder and needs to be adapted based on project's saving strategy.
+        Saves cropped images of detected objects that meet criteria.
+
         Args:
-            frame_data (np.ndarray): The raw image data as a NumPy array.
-            result (dict): The classification result from process_frame or process_image.
-            frame_path (str, optional): Original path of the frame/image if available.
+            image_np (np.ndarray): The image data as a NumPy array (BGR format from OpenCV).
+            result_objects (list): A list of detected object dictionaries from the _analyze_image_data method.
+                                   Each dict should have 'name', 'confidence', 'bounding_box'.
         Returns:
-            str: Path to the saved detection file, or None.
+            list: A list of paths to the saved detection files.
         """
-        logger.info(f"save_processed_frame called with result: {result}. Functionality not fully implemented for Azure yet.")
-        # Example logic (needs refinement based on actual requirements for saving):
-        # if result and result.get("tags") and self.class_names:
-        #     if any(tag in self.class_names for tag in result["tags"]) and result.get("confidence", 0) >= self.confidence_threshold:
-        #         # ... implement saving logic similar to GoogleCVInferencer._save_detection ...
-        #         logger.info(f"Placeholder: Would save frame for tags {result['tags']}")
-        #         return "path/to/saved/azure_detection.jpg" 
-        return None
+        saved_files = []
+        if not self.detections_save_dir:
+            logger.warning("Detections save directory ('detections_save_dir') is not configured. Cannot save detected objects.")
+            return saved_files
+        
+        if not os.path.exists(self.detections_save_dir):
+            try:
+                os.makedirs(self.detections_save_dir, exist_ok=True)
+            except Exception as e:
+                logger.error(f"Could not create base detections directory {self.detections_save_dir}: {e}")
+                return saved_files
+
+        img_h, img_w = image_np.shape[:2]
+
+        for obj in result_objects:
+            obj_name_detected = obj.get("name", "unknown").lower()
+            obj_confidence = obj.get("confidence", 0.0)
+            bounding_box = obj.get("bounding_box")
+
+            if not bounding_box or len(bounding_box) != 4:
+                logger.debug(f"Skipping object due to missing or invalid bounding box: {obj_name_detected}")
+                continue
+
+            if obj_confidence < self.confidence_threshold:
+                logger.debug(f"Skipping object {obj_name_detected} due to low confidence: {obj_confidence} < {self.confidence_threshold}")
+                continue
+
+            # Determine if the object matches one of the target class_names (if any are specified)
+            # And determine the folder name for saving (either the matched class_name or the specific detected name)
+            qualifies_for_saving = False
+            save_category_name = obj_name_detected # Default to the specific name Azure detected
+
+            if not self.class_names: # If no class_names in config, save any confident detection under its own name
+                qualifies_for_saving = True
+            else:
+                for target_class in self.class_names:
+                    if target_class.lower() in obj_name_detected:
+                        qualifies_for_saving = True
+                        save_category_name = target_class.lower() # Save under the broader category from config
+                        break
+            
+            if qualifies_for_saving:
+                x, y, w, h = [int(v) for v in bounding_box]
+
+                # Ensure coordinates are within image bounds for cropping
+                x1, y1 = max(0, x), max(0, y)
+                x2, y2 = min(img_w, x + w), min(img_h, y + h)
+
+                if x2 > x1 and y2 > y1: # Check if the crop area is valid
+                    cropped_image = image_np[y1:y2, x1:x2]
+                    
+                    if cropped_image.size == 0:
+                        logger.warning(f"Cropped image for {obj_name_detected} is empty. Original box: {[x,y,w,h]}, clipped: {[x1,y1,x2,y2]}. Skipping save.")
+                        continue
+
+                    category_save_dir = os.path.join(self.detections_save_dir, save_category_name)
+                    try:
+                        os.makedirs(category_save_dir, exist_ok=True)
+                    except Exception as e:
+                        logger.error(f"Could not create category directory {category_save_dir}: {e}")
+                        continue # Skip saving this object if its directory can't be made
+
+                    unique_id = uuid.uuid4()
+                    filename = f"{unique_id}.png"
+                    save_path = os.path.join(category_save_dir, filename)
+
+                    try:
+                        cv2.imwrite(save_path, cropped_image)
+                        logger.info(f"Saved detected object '{obj_name_detected}' (category: {save_category_name}) to {save_path}")
+                        saved_files.append(save_path)
+                    except Exception as e:
+                        logger.error(f"Failed to save cropped image to {save_path}: {e}")
+                else:
+                    logger.warning(f"Invalid bounding box for {obj_name_detected} after clipping: {[x1,y1,x2,y2]} from original {[x,y,w,h]}. Skipping save.")
+            else:
+                logger.debug(f"Object {obj_name_detected} did not qualify for saving based on class_names filter.")
+                
+        return saved_files
 
