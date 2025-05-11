@@ -21,7 +21,7 @@ ENV/
 
 # Project specific
 /data/
-/boat_ramp_frames/
+/raw_frames/
 /autokeras_boat_ramp/
 /*key*.json
 
