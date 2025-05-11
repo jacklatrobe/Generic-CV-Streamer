@@ -1,7 +1,5 @@
-\
-# BoatRampTagger
-
-BoatRampTagger is a Python application designed to capture frames from video streams (YouTube, EarthCam, or direct stream URLs), process these frames using computer vision to identify objects, and save relevant frames.
+# Generic-CV-Streamer
+Generic-CV-Streamer is a Python application designed to capture frames from video streams (YouTube, EarthCam, or direct stream URLs), process these frames using computer vision to identify objects, and save relevant frames.
 
 ## Features
 
@@ -116,4 +114,4 @@ If you use the `local` CV backend, you need to provide training data for AutoKer
 3.  **Inside `train` (and `test`), create subdirectories for each class name** you want to detect. The names of these subdirectories should exactly match the `class_names` defined in your `config.json`.
 4.  **Place your training images** into the respective class subdirectories. AutoKeras will use these images to train the model.
 
-The more diverse and representative your training images are, the better the model will perform. Ensure images are of reasonable quality and show the objects in various conditions they might appear in the video streams.
+The more diverse and representative your training images are, the better the model will perform. Ensure images are of reasonable quality and show the objects in various conditions they might appear in the video streams. Note that when you use a cloud API, it saves it's detections, so you can use one of the cloud APIs (both offer limited free trials) to gather training data for your local model.
