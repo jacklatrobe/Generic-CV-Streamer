@@ -69,6 +69,8 @@ class FrameExtractor:
         try:
             while True:
                 sys.stderr = stderr_capture
+                cap.set(3, 1920) # attempt to force 1920x1080 resolution
+                cap.set(4, 1080)
                 ok, frame = cap.read()
                 sys.stderr = original_stderr
 
