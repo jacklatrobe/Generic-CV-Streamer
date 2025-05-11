@@ -1,5 +1,5 @@
 """
-Main application script for YouTube Stream Frame Capturer.
+Main application script for Stream Frame Capturer.
 Orchestrates downloading, frame extraction, and (eventually) CV processing.
 """
 
