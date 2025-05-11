@@ -1,4 +1,7 @@
 # Generic-CV-Streamer
+
+![Logo](logo.png)
+
 Generic-CV-Streamer is a Python application designed to capture frames from video streams (YouTube, EarthCam, or direct stream URLs), process these frames using computer vision to identify objects, and save relevant frames.
 
 ## Features
