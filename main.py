@@ -212,7 +212,9 @@ def main(args):
     if not source_url:
         raise ValueError("No URL provided. Please specify a YouTube or EarthCam URL using --url.")
     is_youtube_url = "youtube.com" in source_url or "youtu.be" in source_url
-    is_earthcam_url = "earthcam.com" in source_url
+    from urllib.parse import urlparse
+    parsed_url = urlparse(source_url)
+    is_earthcam_url = parsed_url.hostname and parsed_url.hostname.endswith(".earthcam.com")
 
     cv_processor_instance = None
     if not args.no_cv:
