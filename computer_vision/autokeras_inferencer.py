@@ -13,37 +13,30 @@ import uuid # Added for unique filenames
 
 class AutoKerasInferencer:
     """
-    Manages loading a pre-trained AutoKeras model and performing inference
-    on images or image frames.
+    Manages performing inference using a pre-trained AutoKeras model.
     """
-    def __init__(self, model_path): # Removed class_names from parameters
+    def __init__(self, model_path, class_names, confidence_threshold=0.5): # Added confidence_threshold, default 0.5 for local
         """
         Initializes the AutoKerasInferencer.
 
         Args:
-            model_path (str): Path to the saved Keras model file.
+            model_path (str): Path to the trained Keras model file.
+            class_names (list): List of class names the model was trained on.
+            confidence_threshold (float): Minimum confidence for a detection to be considered.
         """
         self.model_path = model_path
+        self.class_names = [name.lower() for name in class_names] # Normalize to lowercase
         self.clf = None
         self.model_loaded = False
-        # These will be loaded from config:
-        self.class_names = []
-        self.confidence_threshold = 0.7  # Default, will be overridden by config
-        self.detections_save_dir = "detections" # Default, will be overridden by config
+        self.confidence_threshold = confidence_threshold # Set from parameter
+        self.detections_save_dir = "detections" # Default save directory
 
-        self._load_config() # Load settings from config.json
+        self._load_config_and_model() # Modified to reflect new param
 
-        if not self.class_names:
-            # This can be a non-fatal warning if we allow saving with index as class name
-            print("Warning: class_names list is empty after loading config. Model might not have defined classes or config is missing.")
-
-        self._create_detection_directories() # Uses self.detections_save_dir
-        self._load_model()
-
-    def _load_config(self):
+    def _load_config_and_model(self):
         """
-        Loads settings from config.json located at the project root.
-        Assumes this script is in computer_vision, so config is one level up.
+        Loads configuration (detections_save_dir) and the Keras model.
+        Class names and confidence threshold are now passed via __init__.
         """
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         config_path = os.path.join(project_root, "config.json")
@@ -51,14 +44,12 @@ class AutoKerasInferencer:
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
-                self.class_names = config.get("class_names", [])
-                self.confidence_threshold = float(config.get("autokeras_confidence_threshold", self.confidence_threshold))
+                # self.class_names is now set in __init__
+                # self.confidence_threshold = float(config.get("autokeras_confidence_threshold", self.confidence_threshold)) # Removed
                 self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir)
                 
-                if not self.class_names:
-                    print(f"Warning: 'class_names' not found or empty in {config_path}.")
-                else:
-                    print(f"AutoKeras: Loaded class_names: {self.class_names} from {config_path}")
+                # No need to check for self.class_names here as it's passed in
+                # print(f"AutoKeras class_names: {self.class_names}") # Already normalized
                 print(f"AutoKeras: Confidence threshold set to: {self.confidence_threshold}")
                 print(f"AutoKeras: Detections will be saved to: {self.detections_save_dir}")
         except FileNotFoundError:

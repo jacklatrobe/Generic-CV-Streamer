@@ -144,6 +144,7 @@ def main(args):
     DETECTIONS_SAVE_DIR = config_manager.get_detections_save_dir() # Get the new setting
     CAPTURE_EVERY = config_manager.get_capture_every_sec()
     default_credentials_path = config_manager.get_credentials_path(default="service_account.json")
+    confidence_threshold = config_manager.get_confidence_threshold() # Get the confidence threshold
     logger.info(f"Raw frames save directory set to: {RAW_SAVE_DIR}")
     logger.info(f"Detections save directory set to: {DETECTIONS_SAVE_DIR}")
     logger.info(f"Capture interval set to: {CAPTURE_EVERY} seconds")
@@ -223,7 +224,8 @@ def main(args):
                 class_names=class_names,
                 model_dir=autokeras_model_dir,
                 model_filename=autokeras_model_filename,
-                image_data_dir=autokeras_image_data_dir # Pass image_data_dir
+                image_data_dir=autokeras_image_data_dir, # Pass image_data_dir
+                confidence_threshold=confidence_threshold # Pass confidence_threshold
             )
             if not cv_processor_instance.model_ready_for_inference:
                 logger.warning("Local CV Model (AutoKeras) is not ready. Frame processing will not occur if model training failed or data was unavailable.")
@@ -231,13 +233,13 @@ def main(args):
             # Determine credentials path: command line > config file > hardcoded default (now from config)
             credentials_path = args.credentials_path if args.credentials_path is not None else default_credentials_path
             logger.info(f"Using Google CV credentials from: {credentials_path}")
-            cv_processor_instance = GoogleCVProcessor(credentials_path=credentials_path) 
+            cv_processor_instance = GoogleCVProcessor(credentials_path=credentials_path, confidence_threshold=confidence_threshold) # Pass confidence_threshold
             if not cv_processor_instance.api_ready_for_inference: # Check the correct attribute
                 logger.warning(f"Google Cloud Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
         elif args.cv_backend == "azure": # Add this block
             credentials_path = args.credentials_path if args.credentials_path is not None else config_manager.get_setting("azure_credentials_path", "azure_cv_credentials.json") # Or some other default
             logger.info(f"Using Azure CV credentials from: {credentials_path}")
-            cv_processor_instance = AzureCVInferencer(credentials_path=credentials_path)
+            cv_processor_instance = AzureCVInferencer(credentials_path=credentials_path, confidence_threshold=confidence_threshold) # Pass confidence_threshold
             if not cv_processor_instance.api_ready:
                 logger.warning(f"Azure Computer Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
         # Add other backend initializations here

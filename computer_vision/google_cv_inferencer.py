@@ -16,27 +16,28 @@ class GoogleCVInferencer:
     """
     Manages performing inference using Google Cloud Vision API.
     """
-    def __init__(self, credentials_path): # Removed class_names from parameters
+    def __init__(self, credentials_path, confidence_threshold=0.7): # Added confidence_threshold
         """
         Initializes the GoogleCVInferencer.
 
         Args:
             credentials_path (str): Path to the Google Cloud credentials JSON file.
+            confidence_threshold (float): Minimum confidence for a detection to be considered.
         """
         self.credentials_path = credentials_path
-        # self.class_names = class_names # Removed direct assignment
         self.client = None
         self.model_loaded = False
-        self.confidence_threshold = 0.7  # 70% confidence threshold
+        self.confidence_threshold = confidence_threshold # Set from parameter
         self.detections_save_dir = "detections" # Default save directory
         self.use_object_localization = True # Assuming this should be True by default to get bounding boxes
 
-        self._load_config() # Load class_names from config
+        self._load_config_class_names_and_save_dir() # Renamed and modified
         self._initialize_client()
 
-    def _load_config(self):
+    def _load_config_class_names_and_save_dir(self): # Renamed and modified
         """
-        Loads class_names, confidence_threshold, and detections_save_dir from config.json.
+        Loads class_names and detections_save_dir from config.json.
+        Confidence threshold is now passed via __init__.
         """
         # Assuming the script is in BoatRampTagger/computer_vision/
         # Project root is two levels up from this file's directory.
@@ -47,8 +48,7 @@ class GoogleCVInferencer:
             with open(config_path, 'r') as f:
                 config = json.load(f)
                 self.class_names = config.get("class_names", [])
-                # Allow for a specific confidence threshold for Google CV in config
-                self.confidence_threshold = float(config.get("google_confidence_threshold", self.confidence_threshold))
+                # self.confidence_threshold = float(config.get("google_confidence_threshold", self.confidence_threshold)) # Removed
                 self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir)
                 
                 if not self.class_names:

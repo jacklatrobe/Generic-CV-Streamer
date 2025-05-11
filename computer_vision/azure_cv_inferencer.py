@@ -18,27 +18,27 @@ class AzureCVInferencer:
     """
     Manages performing inference using Azure Computer Vision API.
     """
-    def __init__(self, credentials_path):
+    def __init__(self, credentials_path, confidence_threshold=0.5): # Added confidence_threshold, default 0.5 for Azure
         """
         Initializes the AzureCVInferencer.
 
         Args:
-            credentials_path (str): Path to the Azure CV credentials JSON file 
-                                    (containing 'api_key' and 'endpoint').
+            credentials_path (str): Path to the Azure CV credentials JSON file.
+            confidence_threshold (float): Minimum confidence for a detection to be considered.
         """
         self.credentials_path = credentials_path
-        self.class_names = []
         self.client = None
         self.api_ready = False
-        self.confidence_threshold = 0.7  # Default confidence threshold
+        self.confidence_threshold = confidence_threshold # Set from parameter
         self.detections_save_dir = "detections" # Default save directory
+        self.class_names = [] # Initialize class_names
 
-        self._load_config()  # Load class_names and other settings from general config.json
-        self._initialize_client()
+        self._load_config_and_initialize_client() # Modified to reflect new param
 
-    def _load_config(self):
+    def _load_config_and_initialize_client(self):
         """
-        Loads class_names, confidence_threshold, and detections_save_dir from config.json.
+        Loads configuration (class_names, detections_save_dir) and initializes the Azure CV client.
+        Confidence threshold is now passed via __init__.
         """
         # Corrected project_root calculation
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -48,7 +48,6 @@ class AzureCVInferencer:
             with open(config_path, 'r') as f:
                 config = json.load(f)
                 self.class_names = config.get("class_names", [])
-                self.confidence_threshold = float(config.get("azure_confidence_threshold", self.confidence_threshold))
                 self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir) # Load detections_save_dir
                 if not self.class_names:
                     logger.warning(f"'class_names' not found or empty in {config_path}. Detections might not be categorized correctly for filtering, but will save under detected name.")
@@ -64,6 +63,8 @@ class AzureCVInferencer:
             logger.error(f"Invalid 'azure_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
         except Exception as e:
             logger.exception(f"An unexpected error occurred while loading config: {e}. Using defaults.")
+
+        self._initialize_client()
 
     def _initialize_client(self):
         """

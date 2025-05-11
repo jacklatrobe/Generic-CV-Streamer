@@ -87,8 +87,16 @@ class ConfigManager:
             print(f"Warning: 'capture_every_sec' value '{val}' is not a valid number. Using default {default}.")
             return float(default)
 
+    def get_confidence_threshold(self, default=0.7):
+        """Retrieves the 'confidence_threshold' setting."""
+        val = self._config_data.get("confidence_threshold", default)
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            print(f"Warning: 'confidence_threshold' value '{val}' is not a valid number. Using default {default}.")
+            return float(default)
 
-    def get_credentials_path(self, default=None):
+    def get_credentials_path(self, default="service_account.json"):
         """
         Retrieves the 'credentials_path' setting.
         A default value like "credentials/service_account.json" can be provided.
