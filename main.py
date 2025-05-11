@@ -211,11 +211,10 @@ def main(args):
     source_url = args.url if args.url else None
     if not source_url:
         raise ValueError("No URL provided. Please specify a YouTube or EarthCam URL using --url.")
-    is_youtube_url = "youtube.com" in source_url or "youtu.be" in source_url
     from urllib.parse import urlparse
     parsed_url = urlparse(source_url)
-    is_earthcam_url = parsed_url.hostname and parsed_url.hostname.endswith(".earthcam.com")
-
+    is_earthcam_url = parsed_url.hostname and "earthcam.com" in parsed_url.hostname
+    is_youtube_url = ( parsed_url.hostname and parsed_url.hostname.endswith("youtube.com") ) or ( parsed_url.hostname and parsed_url.hostname.endswith("youtu.be") )
     cv_processor_instance = None
     if not args.no_cv:
         logger.info(f"Initializing Computer Vision processor with backend: {args.cv_backend}...")
