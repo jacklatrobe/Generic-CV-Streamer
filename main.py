@@ -66,7 +66,8 @@ def main(args):
         elif args.cv_backend == "google":
             # Import needs to be here for GoogleCVProcessor
             from computer_vision import GoogleCVProcessor
-        # Add other backends here if needed
+        elif args.cv_backend == "azure": # Add this block
+            from computer_vision import AzureCVInferencer
         else: # Should not happen due to argparse choices
             raise ValueError(f"Invalid CV backend specified: {args.cv_backend}")
 
@@ -97,10 +98,15 @@ def main(args):
                 print("Local CV Model (AutoKeras) is not ready. Frame processing will not occur if model training failed or data was unavailable.")
         elif args.cv_backend == "google":
             # Determine credentials path: command line > config file > hardcoded default (now from config)
-            credentials_path = args.google_credentials if args.google_credentials is not None else default_credentials_path
+            credentials_path = args.credentials_path if args.credentials_path is not None else default_credentials_path
             cv_processor_instance = GoogleCVProcessor(credentials_path=credentials_path) 
             if not cv_processor_instance.api_ready_for_inference: # Check the correct attribute
                 print(f"Google Cloud Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
+        elif args.cv_backend == "azure": # Add this block
+            credentials_path = args.credentials_path if args.credentials_path is not None else config_manager.get_setting("azure_credentials_path", "azure_cv_credentials.json") # Or some other default
+            cv_processor_instance = AzureCVInferencer(credentials_path=credentials_path)
+            if not cv_processor_instance.api_ready:
+                print(f"Azure Computer Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
         # Add other backend initializations here
     else:
         print("Computer Vision processing is disabled by command-line argument.")
@@ -156,10 +162,10 @@ if __name__ == "__main__":
                         help="Disable Computer Vision processing. Only captures and saves frames.")
     parser.add_argument("--retrain-cv", action="store_true",
                         help="Retrain the CV model. If not set, uses an existing model or errors if none exists.")
-    parser.add_argument("--cv-backend", type=str, default="local", choices=["local", "google"],
-                        help="Specify the computer vision backend to use: 'local' for AutoKeras or 'google' for Google Cloud Vision API.")
-    parser.add_argument("--credentials-path", type=str, default=None, # Default is now handled by config or a fallback in main()
-                        help="Path to Cloud service account JSON file (e.g., Google, Azure). Overrides path in config file. If not provided, uses path from config or a default.")
+    parser.add_argument("--cv-backend", type=str, default="local", choices=["local", "google", "azure"],
+                        help="Specify the computer vision backend to use: \'local\' for AutoKeras, \'google\' for Google Cloud Vision API, or \'azure\' for Microsoft Azure Vision API.")
+    parser.add_argument("--credentials-path", type=str, default=None, 
+                        help="Path to Cloud service account JSON file (e.g., Google Cloud, Azure). Overrides path in config file. If not provided, uses path from config or a default (e.g., service_account.json for Google, azure_cv_credentials.json for Azure).")
     
     # Potentially add other arguments here later, e.g., for YOUTUBE_URL, SAVE_DIR, etc.
     
