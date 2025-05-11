@@ -22,9 +22,10 @@ ENV/
 # Project specific
 /data/
 /raw_frames/
-/autokeras_boat_ramp/
+/autokeras_cv_project/
 /*key*.json
 /detections/
+/cv_detections/
 
 # Environment variables
 .env

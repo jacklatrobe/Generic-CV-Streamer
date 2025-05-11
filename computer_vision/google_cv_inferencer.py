@@ -1,4 +1,4 @@
-# filepath: c:\\Users\\jlatrobe\\BoatRampTagger\\computer_vision\\google_cv_inferencer.py
+# filepath: c:\\Users\\Jack\\Generic-CV-Streamer\\computer_vision\\google_cv_inferencer.py
 """
 Handles inference using Google Cloud Vision API.
 """
@@ -16,60 +16,27 @@ class GoogleCVInferencer:
     """
     Manages performing inference using Google Cloud Vision API.
     """
-    def __init__(self, credentials_path, confidence_threshold=0.7): # Added confidence_threshold
+    def __init__(self, credentials_path: str, class_names: list[str], detections_save_dir: str, confidence_threshold: float = 0.7):
         """
         Initializes the GoogleCVInferencer.
 
         Args:
             credentials_path (str): Path to the Google Cloud credentials JSON file.
+            class_names (list[str]): List of target class names.
+            detections_save_dir (str): Directory to save detection crops.
             confidence_threshold (float): Minimum confidence for a detection to be considered.
         """
         self.credentials_path = credentials_path
+        self.class_names = [name.lower() for name in class_names]
+        self.detections_save_dir = detections_save_dir
         self.client = None
-        self.model_loaded = False
-        self.confidence_threshold = confidence_threshold # Set from parameter
-        self.detections_save_dir = "detections" # Default save directory
-        self.use_object_localization = True # Assuming this should be True by default to get bounding boxes
+        # self.model_loaded = False # This attribute doesn't seem to be used consistently for API readiness
+        self.api_ready = False # Use this to track if the client initialized correctly
+        self.confidence_threshold = confidence_threshold
+        self.use_object_localization = True
 
-        self._load_config_class_names_and_save_dir() # Renamed and modified
+        # self._load_config_class_names_and_save_dir() # Removed: config values now passed in
         self._initialize_client()
-
-    def _load_config_class_names_and_save_dir(self): # Renamed and modified
-        """
-        Loads class_names and detections_save_dir from config.json.
-        Confidence threshold is now passed via __init__.
-        """
-        # Assuming the script is in BoatRampTagger/computer_vision/
-        # Project root is two levels up from this file's directory.
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..")) # Corrected path
-        config_path = os.path.join(project_root, "config.json")
-        
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                self.class_names = config.get("class_names", [])
-                # self.confidence_threshold = float(config.get("google_confidence_threshold", self.confidence_threshold)) # Removed
-                self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir)
-                
-                if not self.class_names:
-                    print(f"Warning: 'class_names' not found or empty in {config_path}. Detections will be saved under their detected names.")
-                else:
-                    print(f"Loaded class_names: {self.class_names} from {config_path}")
-                print(f"Google CV confidence threshold set to: {self.confidence_threshold}")
-                print(f"Google CV detections will be saved to: {self.detections_save_dir}")
-
-        except FileNotFoundError:
-            print(f"Error: {config_path} not found. Using default settings.")
-            self.class_names = [] 
-        except json.JSONDecodeError:
-            print(f"Error: Could not decode {config_path}. Using default settings.")
-            self.class_names = []
-        except ValueError:
-            print(f"Error: Invalid 'google_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
-        except Exception as e:
-            print(f"An unexpected error occurred while loading config: {e}. Using default settings.")
-            self.class_names = []
-        self.class_names = [name.lower() for name in self.class_names]  # Normalize class names to lowercase
 
     def _initialize_client(self):
         """

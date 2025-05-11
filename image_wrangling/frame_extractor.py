@@ -11,7 +11,7 @@ import hashlib  # Added for hashing frames
 
 class FrameExtractor:
     """Extracts and saves frames from a video stream at specified intervals."""
-    def __init__(self, save_dir: str = "boat_ramp_frames", capture_every_sec: float = 2.0, cv_processor=None, detections_save_dir: str = "detections"):
+    def __init__(self, save_dir: str = "raw_frames", capture_every_sec: float = 2.0, cv_processor=None, detections_save_dir: str = "cv_detections"):
         """Initializes the FrameExtractor.
 
         Args:

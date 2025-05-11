@@ -103,7 +103,7 @@ class AutoKerasCVProcessor:
             image_path (str): Absolute or relative path to the image file.
 
         Returns:
-            dict: A dictionary with classification results (e.g., {'tags': ['boat'], 'confidence': 0.95})
+            dict: A dictionary with classification results (e.g., {'tags': ['object_a'], 'confidence': 0.95})
                   from the inferencer, or an error dictionary if the inferencer is not ready
                   (e.g., {'tags': ['error_inferencer_not_ready'], 'confidence': 0.0}).
         """
@@ -121,7 +121,7 @@ class AutoKerasCVProcessor:
             frame_data (np.ndarray): The raw image data as a NumPy array (e.g., from OpenCV).
 
         Returns:
-            dict: A dictionary with classification results (e.g., {'tags': ['boat'], 'confidence': 0.95})
+            dict: A dictionary with classification results (e.g., {'tags': ['object_a'], 'confidence': 0.95})
                   from the inferencer, or an error dictionary if the inferencer is not ready
                   (e.g., {'tags': ['error_inferencer_not_ready'], 'confidence': 0.0}).
         """
@@ -149,7 +149,7 @@ if __name__ == '__main__':
     print(f"Training data will be sourced from: {base_data_dir}")
 
     # Ensure dummy data directories and a few images exist for testing
-    dummy_classes = ['cars', 'boats', 'trailers']
+    dummy_classes = ['object_a', 'object_b', 'object_c']
     for class_name_item in dummy_classes:
         class_dir = os.path.join(base_data_dir, class_name_item)
         os.makedirs(class_dir, exist_ok=True)
@@ -172,7 +172,7 @@ if __name__ == '__main__':
 
     if processor_train.model_ready_for_inference:
         # Test with a dummy image from one of the classes
-        test_image_path = os.path.join(base_data_dir, 'cars', 'dummy_cars_0.jpg')
+        test_image_path = os.path.join(base_data_dir, 'object_a', 'dummy_object_a_0.jpg')
         if os.path.exists(test_image_path):
             print(f"\nTesting process_image with {test_image_path}:")
             result = processor_train.process_image(test_image_path)
@@ -193,13 +193,13 @@ if __name__ == '__main__':
         print("\n--- Testing with existing model (retrain_model=False) ---")
         processor_load = AutoKerasCVProcessor(retrain_model=False, class_names=dummy_classes, model_dir=model_output_dir, model_filename=MODEL_FILENAME) # Should load the model trained above
         if processor_load.model_ready_for_inference:
-            test_image_path_boats = os.path.join(base_data_dir, 'boats', 'dummy_boats_0.jpg')
-            if os.path.exists(test_image_path_boats):
-                print(f"\nTesting process_image with {test_image_path_boats} using loaded model:")
-                result = processor_load.process_image(test_image_path_boats)
+            test_image_path_sample = os.path.join(base_data_dir, 'object_a', 'dummy_object_a_0.jpg')
+            if os.path.exists(test_image_path_sample):
+                print(f"\nTesting process_image with {test_image_path_sample} using loaded model:")
+                result = processor_load.process_image(test_image_path_sample)
                 print(f"Result: {result}")
             else:
-                print(f"\nSkipping process_image test, dummy image not found at {test_image_path_boats}")
+                print(f"\nSkipping process_image test, dummy image not found at {test_image_path_sample}")
         else:
             print("Failed to initialize processor with existing model, or model was not deemed ready.")
     else:

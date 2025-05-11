@@ -134,7 +134,7 @@ class AutoKerasTrainer:
             clf = ak.ImageClassifier(
                 overwrite=True, 
                 max_trials=self.max_trials, 
-                project_name="autokeras_boat_ramp_project", # Can be customized
+                project_name="autokeras_cv_project", # Can be customized
                 # num_classes=len(self.class_names) # AutoKeras usually infers this from data
             )
 

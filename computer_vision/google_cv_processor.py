@@ -1,4 +1,4 @@
-# filepath: c:\Users\jlatrobe\BoatRampTagger\computer_vision\google_cv_processor.py
+# filepath: c:\Users\Jack\Generic-CV-Streamer\computer_vision\google_cv_processor.py
 """
 Orchestrates the Google Cloud Vision API-based computer vision processing.
 """
@@ -14,38 +14,48 @@ class GoogleCVProcessor:
     Manages the initialization of the GoogleCVInferencer.
     """
 
-    def __init__(self, class_names=None, credentials_path=None):
+    def __init__(self, config_manager, credentials_path=None):
         """
         Initializes the GoogleCVProcessor.
 
         Args:
-            class_names (list, optional): A list of specific class names the application
-                                          is interested in. If None, it will try to
-                                          determine them from the data directory structure.
+            config_manager (ConfigManager): An instance of ConfigManager to access settings.
             credentials_path (str, optional): Path to Google Cloud service account JSON file.
+                                          Overrides credentials_path from config if provided.
         """
-        current_script_dir = os.path.dirname(__file__)
-        project_root = os.path.abspath(os.path.join(current_script_dir, ".."))
-        self.data_dir = os.path.abspath(os.path.join(current_script_dir, DATA_DIR_RELATIVE))
+        self.config_manager = config_manager
+        self.class_names = self.config_manager.get_class_names(default=[])
+        self.detections_save_dir = self.config_manager.get_detections_save_dir(default="detections/google_cv")
+        self.confidence_threshold = self.config_manager.get_confidence_threshold(default=0.7) # Get general confidence
         
-        # Look for Google service account JSON in project root if not specified
-        if credentials_path is None:
-            default_credentials = os.path.join(project_root, "gptactions-424000-8f24fedcc786.json")
-            if os.path.exists(default_credentials):
-                credentials_path = default_credentials
-                print(f"Found Google service account credentials at: {credentials_path}")
-        
-        self.class_names = class_names if class_names is not None else []
-        if not self.class_names:
-            self._determine_class_names() 
+        # Determine credentials_path: command-line arg > config file > default
+        # The command-line override for credentials_path is handled in main.py before this is called.
+        # Here, we prioritize the direct credentials_path argument if provided to __init__,
+        # then fall back to what's in config_manager (which itself has a default).
+        actual_credentials_path = credentials_path if credentials_path is not None else self.config_manager.get_setting("google_credentials_path")
+
+        # If still no path, and a default general 'credentials_path' exists in config, consider using it.
+        # However, it's better to have a specific 'google_credentials_path' for clarity.
+        if actual_credentials_path is None:
+            actual_credentials_path = self.config_manager.get_credentials_path(default=None) # General one
+            if actual_credentials_path:
+                print(f"Warning: Using general 'credentials_path' for Google CV. Consider setting 'google_credentials_path' in config.")
+
+        # Ensure detections_save_dir is specific for Google CV if not already handled by config
+        # This creates a subdirectory like "detections/google_cv"
+        base_detections_dir = self.config_manager.get_detections_save_dir(default="detections")
+        self.detections_save_dir = os.path.join(base_detections_dir, "google_cv")
+        os.makedirs(self.detections_save_dir, exist_ok=True)
 
         self.inferencer = None
-        self.api_ready_for_inference = False # Changed from model_ready_for_inference
+        self.api_ready_for_inference = False
 
         print("Initializing Google Cloud Vision Processor...")
         self.inferencer = GoogleCVInferencer(
+            credentials_path=actual_credentials_path,
             class_names=self.class_names,
-            credentials_path=credentials_path
+            detections_save_dir=self.detections_save_dir, # Pass the specific dir
+            confidence_threshold=self.confidence_threshold
         )
 
         if self.inferencer and self.inferencer.api_ready: # Check inferencer's api_ready status
@@ -60,24 +70,32 @@ class GoogleCVProcessor:
 
     def _determine_class_names(self):
         """
-        Determines class names by listing subdirectories in `self.data_dir`.
-        Populates `self.class_names`.
+        Determines class names by listing subdirectories in the `autokeras_image_data_dir` from config.
+        Populates `self.class_names` if it wasn't already populated from `class_names` in config.
+        This method is primarily a fallback or for autokeras, GoogleCV should rely on `class_names` directly.
+        For GoogleCV, class_names are now directly taken from config_manager in __init__.
+        This method might be redundant for GoogleCVProcessor if class_names are always defined in config.
+        Kept for potential compatibility or if class_names might be dynamically determined in some scenarios.
         """
-        if os.path.exists(self.data_dir) and os.path.isdir(self.data_dir):
-            excluded_dirs = {'models', 'detections', 'detections_google_cv'}
-            self.class_names = sorted([
-                d for d in os.listdir(self.data_dir)
-                if os.path.isdir(os.path.join(self.data_dir, d)) and d not in excluded_dirs
-            ])
-            if not self.class_names:
-                print(f"Warning: Data directory {self.data_dir} found, but it does not contain any "
-                      "valid class subdirectories (or they are all excluded). "
-                      "Google CV will report all labels it finds.")
+        if not self.class_names: # Only run if class_names weren't provided/found in config
+            image_data_dir_for_classes = self.config_manager.get_autokeras_image_data_dir(default=None)
+            if image_data_dir_for_classes and os.path.exists(image_data_dir_for_classes) and os.path.isdir(image_data_dir_for_classes):
+                excluded_dirs = {'models', 'detections', 'detections_google_cv', 'google_cv'} # Added 'google_cv'
+                self.class_names = sorted([
+                    d for d in os.listdir(image_data_dir_for_classes)
+                    if os.path.isdir(os.path.join(image_data_dir_for_classes, d)) and d not in excluded_dirs
+                ])
+                if not self.class_names:
+                    print(f"Warning: Data directory {image_data_dir_for_classes} found, but it does not contain any "
+                          "valid class subdirectories (or they are all excluded). "
+                          "Google CV will report all labels it finds.")
+                else:
+                    print(f"Target class names determined from data directory: {self.class_names}")
             else:
-                print(f"Target class names determined from data directory: {self.class_names}")
-        else:
-            print(f"Warning: Data directory {self.data_dir} not found or is not a directory. "
-                  "Cannot automatically determine target class names. Google CV will report all labels.")
+                print(f"Warning: '{self.config_manager.config_path}' does not define 'class_names' and "
+                      f"autokeras_image_data_dir ('{image_data_dir_for_classes}') not found or is not a directory. "
+                      "Google CV will report all labels it finds if no class_names are specified.")
+        # else: class_names already loaded by __init__ from config_manager
 
 
     def process_image(self, image_path: str):
@@ -113,25 +131,43 @@ class GoogleCVProcessor:
 # Example usage (for testing purposes when running this file directly)
 if __name__ == '__main__':
     print("Initializing GoogleCVProcessor for testing...")
-    current_script_dir = os.path.dirname(__file__)
-    project_root = os.path.abspath(os.path.join(current_script_dir, ".."))
-    dummy_image_dir = os.path.join(project_root, "boat_ramp_frames") 
-    os.makedirs(dummy_image_dir, exist_ok=True)
-    dummy_image_path = os.path.join(dummy_image_dir, "google_cv_test_image.jpg")
+    # For testing, create a dummy ConfigManager
+    class DummyConfigManager:
+        def get_class_names(self, default=None): return ['boat', 'car', 'trailer']
+        def get_detections_save_dir(self, default=None): return "detections_test"
+        def get_confidence_threshold(self, default=None): return 0.5
+        def get_setting(self, key, default=None):
+            if key == "google_credentials_path": return None # Simulate not set, to test fallback
+            return default
+        def get_credentials_path(self, default=None): return "dummy_google_creds.json" # General fallback
+        def get_autokeras_image_data_dir(self, default=None): return "image_data_test" # For _determine_class_names fallback
+        @property
+        def config_path(self): return "dummy_config.json"
 
-    if not os.path.exists(dummy_image_path):
-        try:
-            import cv2 
-            dummy_img = np.zeros((256, 256, 3), dtype=np.uint8)
-            cv2.putText(dummy_img, "Test", (50,128), cv2.FONT_HERSHEY_SIMPLEX, 3, (255,255,255), 2)
-            cv2.imwrite(dummy_image_path, dummy_img)
-            print(f"Created dummy image for testing: {dummy_image_path}")
-        except Exception as e:
-            print(f"Could not create dummy image {dummy_image_path}: {e}. Please create it manually for testing.")
+    dummy_config = DummyConfigManager()
+    # Create a dummy credentials file if it doesn't exist, as inferencer might try to use it.
+    if not os.path.exists("dummy_google_creds.json"):
+        with open("dummy_google_creds.json", 'w') as f:
+            import json
+            json.dump({"type": "service_account"}, f) # Minimal valid JSON
 
-    processor = GoogleCVProcessor(class_names=['boat', 'car', 'trailer'])
+    processor = GoogleCVProcessor(config_manager=dummy_config)
 
     if processor.api_ready_for_inference:
+        dummy_image_dir = os.path.join(os.path.dirname(__file__), "sample_frames") 
+        os.makedirs(dummy_image_dir, exist_ok=True)
+        dummy_image_path = os.path.join(dummy_image_dir, "google_cv_test_image.jpg")
+
+        if not os.path.exists(dummy_image_path):
+            try:
+                import cv2 
+                dummy_img = np.zeros((256, 256, 3), dtype=np.uint8)
+                cv2.putText(dummy_img, "Test", (50,128), cv2.FONT_HERSHEY_SIMPLEX, 3, (255,255,255), 2)
+                cv2.imwrite(dummy_image_path, dummy_img)
+                print(f"Created dummy image for testing: {dummy_image_path}")
+            except Exception as e:
+                print(f"Could not create dummy image {dummy_image_path}: {e}. Please create it manually for testing.")
+
         if os.path.exists(dummy_image_path):
             print(f"\nTesting process_image with {dummy_image_path}:")
             result_image = processor.process_image(dummy_image_path)
