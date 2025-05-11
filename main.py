@@ -41,8 +41,13 @@ console_handler.setFormatter(console_formatter)
 # Filter for console handler to suppress Azure SDK INFO logs
 class AzureSdkInfoFilter(logging.Filter):
     def filter(self, record):
-        # Allow logs not from Azure HTTP policy, or allow if level is WARNING or higher
-        return not (record.name == "azure.core.pipeline.policies.http_logging_policy" and record.levelno < logging.WARNING)
+        # Allow logs not from Azure HTTP policy or computer_vision.azure_cv_inferencer,
+        # or allow if level is WARNING or higher
+        if record.name == "azure.core.pipeline.policies.http_logging_policy" and record.levelno < logging.WARNING:
+            return False
+        if record.name == "computer_vision.azure_cv_inferencer" and record.levelno < logging.WARNING: # Added this condition
+            return False
+        return True
 
 console_handler.addFilter(AzureSdkInfoFilter())
 
@@ -151,12 +156,38 @@ def main(args):
 
     # Get AutoKeras specific settings for later use
     try:
-        class_names = config_manager.get_class_names()
-        logger.info(f"Class names loaded: {class_names}")
+        original_class_names = config_manager.get_class_names() 
+        logger.info(f"Original class names loaded from config: {original_class_names}")
+        expansion_map = config_manager.get_expansion_map() # Load expansion map
+        if not expansion_map: # Add a default empty map if not in config, to prevent errors
+            logger.info("'expansion_map' not found in config or is empty. Using no expansions.")
+            expansion_map = {}
+        else:
+            logger.info(f"Expansion map loaded from config: {expansion_map}")
+
     except (KeyError, ValueError) as e:
-        # print(f"Configuration Error: {e}")
-        logger.error(f"Configuration Error for class_names: {e}")
+        logger.error(f"Configuration Error for class_names or expansion_map: {e}")
         return
+
+    # --- Quick and dirty class name expansion --- Start
+    # expansion_map is now loaded from config
+    expanded_class_names = []
+    if original_class_names: # Ensure original_class_names is not None and is iterable
+        for name in original_class_names:
+            if isinstance(name, str):
+                # Get the list of expanded names, defaulting to the original name if not in map
+                # Ensure all names are lowercased for consistent matching
+                terms_to_add = [term.lower() for term in expansion_map.get(name.lower(), [name])]
+                expanded_class_names.extend(terms_to_add)
+            else:
+                logger.warning(f"Encountered non-string class name '{name}' in config, skipping expansion for it.")
+                expanded_class_names.append(str(name).lower()) # Add as string, lowercased
+
+    # Remove duplicates and sort for consistency (optional, but good for logging)
+    if expanded_class_names:
+        expanded_class_names = sorted(list(set(expanded_class_names)))
+    logger.info(f"Expanded class names for CV processing: {expanded_class_names}")
+    # --- Quick and dirty class name expansion --- End
     
     autokeras_model_dir = config_manager.get_autokeras_model_dir()
     autokeras_model_filename = config_manager.get_autokeras_model_filename()
@@ -222,7 +253,7 @@ def main(args):
             # Pass the retrain_cv flag and config values to the AutoKeras processor
             cv_processor_instance = AutoKerasCVProcessor(
                 retrain_model=args.retrain_cv,
-                class_names=class_names,
+                class_names=expanded_class_names, # Use expanded_class_names
                 model_dir=autokeras_model_dir,
                 model_filename=autokeras_model_filename,
                 image_data_dir=autokeras_image_data_dir, # Pass image_data_dir
@@ -240,7 +271,11 @@ def main(args):
         elif args.cv_backend == "azure": # Add this block
             credentials_path = args.credentials_path if args.credentials_path is not None else config_manager.get_setting("azure_credentials_path", "azure_cv_credentials.json") # Or some other default
             logger.info(f"Using Azure CV credentials from: {credentials_path}")
-            cv_processor_instance = AzureCVInferencer(credentials_path=credentials_path, confidence_threshold=confidence_threshold) # Pass confidence_threshold
+            cv_processor_instance = AzureCVInferencer(
+                credentials_path=credentials_path, 
+                confidence_threshold=confidence_threshold,
+                class_names_override=expanded_class_names # Pass expanded list
+            )
             if not cv_processor_instance.api_ready:
                 logger.warning(f"Azure Computer Vision API is not ready (credentials: {credentials_path}). Frame processing will not occur. Check credentials and API status.")
         # Add other backend initializations here

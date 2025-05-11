@@ -18,51 +18,76 @@ class AzureCVInferencer:
     """
     Manages performing inference using Azure Computer Vision API.
     """
-    def __init__(self, credentials_path, confidence_threshold=0.5): # Added confidence_threshold, default 0.5 for Azure
+    def __init__(self, credentials_path, confidence_threshold=0.5, class_names_override=None): # Added class_names_override
         """
         Initializes the AzureCVInferencer.
 
         Args:
             credentials_path (str): Path to the Azure CV credentials JSON file.
             confidence_threshold (float): Minimum confidence for a detection to be considered.
+            class_names_override (list, optional): A list of class names to use instead of from config.json.
         """
         self.credentials_path = credentials_path
         self.client = None
         self.api_ready = False
-        self.confidence_threshold = confidence_threshold # Set from parameter
-        self.detections_save_dir = "detections" # Default save directory
-        self.class_names = [] # Initialize class_names
+        self.confidence_threshold = confidence_threshold
+        self.detections_save_dir = "detections"
+        self.class_names = []
 
-        self._load_config_and_initialize_client() # Modified to reflect new param
+        self._load_config_and_initialize_client(class_names_override) # Pass override
 
-    def _load_config_and_initialize_client(self):
+    def _load_config_and_initialize_client(self, class_names_override=None): # Added class_names_override
         """
         Loads configuration (class_names, detections_save_dir) and initializes the Azure CV client.
         Confidence threshold is now passed via __init__.
+        Class names can be overridden.
         """
         # Corrected project_root calculation
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         config_path = os.path.join(project_root, "config.json")
         
+        if class_names_override is not None:
+            self.class_names = [name.lower() for name in class_names_override if isinstance(name, str)]
+            logger.info(f"Using overridden class_names: {self.class_names}")
+        else:
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                    loaded_class_names = config.get("class_names", [])
+                    if isinstance(loaded_class_names, list):
+                        self.class_names = [name.lower() for name in loaded_class_names if isinstance(name, str)]
+                    else:
+                        logger.warning(f"'class_names' in {config_path} is not a list. Using empty list.")
+                        self.class_names = []
+                    
+                    if not self.class_names:
+                        logger.warning(f"'class_names' not found, empty, or invalid in {config_path}. Detections might not be categorized correctly for filtering, but will save under detected name.")
+                    else:
+                        logger.info(f"Loaded class_names: {self.class_names} from {config_path}")
+            except FileNotFoundError:
+                logger.error(f"Configuration file {config_path} not found. Using empty list for class_names as no override was provided.")
+                self.class_names = [] # Ensure it's an empty list
+            except json.JSONDecodeError:
+                logger.error(f"Could not decode {config_path}. Using empty list for class_names as no override was provided.")
+                self.class_names = [] # Ensure it's an empty list
+            except Exception as e:
+                logger.exception(f"An unexpected error occurred while loading class_names from config: {e}. Using empty list.")
+                self.class_names = [] # Ensure it's an empty list
+
+        # Load other configs like detections_save_dir, which are not overridden by this new param
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
-                self.class_names = config.get("class_names", [])
-                self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir) # Load detections_save_dir
-                if not self.class_names:
-                    logger.warning(f"'class_names' not found or empty in {config_path}. Detections might not be categorized correctly for filtering, but will save under detected name.")
-                else:
-                    logger.info(f"Loaded class_names: {self.class_names} from {config_path}")
-                logger.info(f"Azure confidence threshold set to: {self.confidence_threshold}")
-                logger.info(f"Detections will be saved to: {self.detections_save_dir}")
+                self.detections_save_dir = config.get("detections_save_dir", self.detections_save_dir)
         except FileNotFoundError:
-            logger.error(f"Configuration file {config_path} not found. Using defaults.")
+            logger.info(f"Configuration file {config_path} not found. Using default detections_save_dir: {self.detections_save_dir}")
         except json.JSONDecodeError:
-            logger.error(f"Could not decode {config_path}. Using defaults.")
-        except ValueError:
-            logger.error(f"Invalid 'azure_confidence_threshold' in {config_path}. Using default {self.confidence_threshold}.")
+            logger.error(f"Could not decode {config_path} for other settings. Using default detections_save_dir: {self.detections_save_dir}")
         except Exception as e:
-            logger.exception(f"An unexpected error occurred while loading config: {e}. Using defaults.")
+            logger.exception(f"An unexpected error occurred while loading other config settings: {e}")
+
+        logger.info(f"Azure confidence threshold set to: {self.confidence_threshold}")
+        logger.info(f"Detections will be saved to: {self.detections_save_dir}")
 
         self._initialize_client()
 
@@ -166,6 +191,7 @@ class AzureCVInferencer:
             image_data=image_data,
             visual_features=[VisualFeatures.OBJECTS, VisualFeatures.TAGS] # Added TAGS for broader context if needed, OBJECTS is primary
         )
+        logger.info(f"Raw Azure CV response: {result}") # Added line to log raw response
 
         processed_objects = []
         relevant_tags = [] # Tags based on class_names and confidence

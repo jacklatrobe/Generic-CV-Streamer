@@ -114,3 +114,34 @@ class ConfigManager:
     def get_autokeras_image_data_dir(self, default="data/images/"):
         """Retrieves the 'autokeras_image_data_dir' setting (directory for training images)."""
         return self._config_data.get("autokeras_image_data_dir", default)
+
+    def get_expansion_map(self, default=None):
+        """
+        Retrieves the 'expansion_map' setting.
+
+        Args:
+            default (dict, optional): Default value if 'expansion_map' is not found.
+
+        Returns:
+            dict: The expansion map.
+
+        Raises:
+            KeyError: If 'expansion_map' is not found and no default is provided.
+            ValueError: If 'expansion_map' is not a dictionary, or if its values are not lists of strings.
+        """
+        expansion_map = self._config_data.get("expansion_map")
+        if expansion_map is None:
+            if default is not None:
+                return default
+            # Return an empty dict by default if not found, to prevent crashes if it's optional
+            # Or raise KeyError if it should be mandatory: 
+            # raise KeyError(f"'expansion_map' not found in configuration file '{self.config_path}'.")
+            return {}
+        
+        if not isinstance(expansion_map, dict):
+            raise ValueError("'expansion_map' in configuration must be a dictionary.")
+        
+        for key, value in expansion_map.items():
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ValueError(f"Invalid format for expansion_map key '{key}': must be a list of strings.")
+        return expansion_map

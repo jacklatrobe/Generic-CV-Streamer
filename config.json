@@ -3,6 +3,16 @@
         "car",
         "person"
     ],
+    "expansion_map": {
+        "car": ["car", "vehicle", "land vehicle", "automobile", "auto", "van", "truck"],
+        "person": ["person", "human", "individual"],
+        "boat": ["boat", "ship", "yacht", "vessel", "watercraft"],
+        "trailer": ["trailer", "semi-trailer", "lorry", "articulated lorry"],
+        "dog": ["dog", "canine", "puppy"],
+        "cat": ["cat", "feline", "kitten"],
+        "bicycle": ["bicycle", "bike", "cycle", "pedal cycle"],
+        "motorbike": ["motorbike", "motorcycle", "scooter", "moped"]
+    },
     "raw_save_dir": "raw_frames",
     "detections_save_dir": "detections",
     "capture_every_sec": 5,
